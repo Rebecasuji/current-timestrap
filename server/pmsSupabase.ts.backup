@@ -1,0 +1,245 @@
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY!;
+
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
+// PMS Project interface matching Supabase schema
+export interface PMSProject {
+  project_code: string;
+  project_name: string;
+  description?: string;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+  created_by_emp_code?: string;
+  progress_percentage?: number;
+  client_name?: string;
+}
+
+// PMS Task interface matching Supabase schema
+export interface PMSTask {
+  id: string;
+  project_id: string;
+  key_step_id?: string;
+  task_name: string;
+  description?: string;
+  priority?: string;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+  assignee?: string;
+  task_members?: string[];
+  created_at?: string;
+  assigner_id?: string;
+  updated_at?: string;
+}
+
+export const getProjects = async (userRole?: string, userEmpCode?: string, userDepartment?: string): Promise<PMSProject[]> => {
+  try {
+    console.log("� PMS getProjects called with:", { userRole, userEmpCode, userDepartment });
+
+    // For now, fetch all projects since roles aren't implemented in PMS yet
+    // Later this can be enhanced with role-based filtering
+    let query = supabase
+      .from("Projects")
+      .select("*")
+      .order("project_name");
+
+    console.log("📡 Executing PMS query...");
+
+    // If user department is provided, try to filter projects by department
+    // Try multiple possible column names and approaches
+    if (userDepartment) {
+      console.log("🏢 Attempting to filter by department:", userDepartment);
+
+      // If user is admin, don't filter by department - they should see all projects
+      if (userRole === 'admin') {
+        console.log("👑 User is admin, returning all projects");
+      } else {
+        // For non-admin users, try department filtering
+        // First try: direct department column
+        try {
+          query = query.eq("department", userDepartment);
+          console.log("Using 'department' column");
+        } catch (error) {
+          console.warn("Department column not found, trying alternatives:", error);
+
+          // Second try: dept column
+          try {
+            query = query.eq("dept", userDepartment);
+            console.log("Using 'dept' column");
+          } catch (error2) {
+            console.warn("'dept' column also not found:", error2);
+
+            // Third try: department_name column
+            try {
+              query = query.eq("department_name", userDepartment);
+              console.log("Using 'department_name' column");
+            } catch (error3) {
+              console.warn("'department_name' column also not found:", error3);
+
+              // If no department filtering is possible, return all projects for now
+              // This is a fallback - ideally the PMS should have proper department associations
+              console.log("No department filtering available, returning all projects");
+            }
+          }
+        }
+      }
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error("❌ PMS 'Projects' table error:", error.message);
+      console.error("❌ Full error:", error);
+
+      // Try alternative table names
+      console.log("🔄 Trying alternative table names...");
+
+      const alternativeTables = ['projects', 'Project', 'project', 'tbl_projects', 'tbl_project', 'pms_projects'];
+      for (const tableName of alternativeTables) {
+        try {
+          console.log(`📡 Trying table: ${tableName}`);
+          const { data: altData, error: altError } = await supabase
+            .from(tableName)
+            .select("*")
+            .order("project_name")
+            .limit(10);        
+
+          if (!altError && altData) {
+            console.log(`✅ Found ${altData.length} projects in table '${tableName}'`);
+            if (altData.length > 0) {
+              console.log("📋 Sample:", altData[0]);
+              console.log("📋 All columns:", Object.keys(altData[0]));
+              return altData;
+            }
+          } else if (altError) {
+            console.log(`❌ Table '${tableName}' error: ${altError.message}`);
+          }
+        } catch (altErr) {
+          console.log(`💥 Exception checking table '${tableName}': ${altErr.message}`);
+        }
+      }
+
+      return []; // Return empty array if no table works
+    }
+
+    let projects = data || [];
+    console.log(`📊 PMS projects returned: ${projects.length} projects`);
+    if (projects.length > 0) {
+      console.log("📋 First project sample:", projects[0]);
+      console.log("📋 Available columns:", Object.keys(projects[0]));
+    } else {
+      console.log("⚠️ No projects found in PMS database");
+    }
+
+    return projects;
+  } catch (error) {
+    console.error("💥 Error connecting to PMS:", error);
+    return []; // Return empty array on connection issues
+  }
+};
+
+export const getTasks = async (projectId?: string, userDepartment?: string): Promise<PMSTask[]> => {
+  try {
+    let query = supabase
+      .from("project_tasks")
+      .select("*")
+      .order("task_name");
+
+    if (projectId) {
+      // Use project_id column as defined in the interface
+      query = query.eq('project_id', projectId);
+    }
+
+    // Note: Department filtering for tasks requires joining with Projects table
+    // This is complex and may not work if the schema doesn't support it
+    // For now, we'll skip department filtering for tasks and rely on project-level filtering
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn("PMS 'project_tasks' table not found or error:", error.message);
+
+      // Try alternative table names
+      console.log("🔄 Trying alternative task table names...");
+
+      const alternativeTables = ['tasks', 'projecttask', 'project_task', 'ProjectTasks', 'tbl_tasks', 'pms_tasks'];
+      for (const tableName of alternativeTables) {
+        try {
+          console.log(`📡 Trying tasks table: ${tableName}`);
+          let altQuery = supabase
+            .from(tableName)
+            .select("*")
+            .order("task_name");
+
+          if (projectId) {
+            altQuery = altQuery.eq('project_id', projectId);
+          }
+
+          const { data: altData, error: altError } = await altQuery;
+
+          if (!altError && altData) {
+            console.log(`✅ Found ${altData.length} tasks in table '${tableName}'`);
+            return altData;
+          } else if (altError) {
+            console.log(`❌ Tasks table '${tableName}' error: ${altError.message}`);
+          }
+        } catch (altErr) {
+          console.log(`💥 Exception checking tasks table '${tableName}': ${altErr.message}`);
+        }
+      }
+
+      return []; // Return empty array if no table works
+    }
+    return data || [];
+  } catch (error) {
+    console.warn("Error connecting to PMS:", error);
+    return []; // Return empty array on connection issues
+  }
+};
+
+export const getTasksByProject = async (projectCode: string, userDepartment?: string): Promise<PMSTask[]> => {
+  try {
+    let query = supabase
+      .from("project_tasks")
+      .select("*")
+      .eq('project_id', projectCode)
+      .order("task_name");
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn("PMS 'project_tasks' table not found or error:", error.message);
+
+      // Try alternative table names
+      console.log("🔄 Trying alternative task table names for getTasksByProject...");
+
+      const alternativeTables = ['tasks', 'projecttask', 'project_task', 'ProjectTasks', 'tbl_tasks', 'pms_tasks'];
+      for (const tableName of alternativeTables) {
+        try {
+          console.log(`📡 Trying tasks table: ${tableName} for project ${projectCode}`);
+          const { data: altData, error: altError } = await supabase
+            .from(tableName)
+            .select("*")
+            .eq('project_id', projectCode)
+            .order("task_name");
+
+          if (!altError && altData) {
+            console.log(`✅ Found ${altData.length} tasks in table '${tableName}' for project ${projectCode}`);
+            return altData;
+          } else if (altError) {
+            console.log(`❌ Tasks table '${tableName}' error: ${altError.message}`);
+          }
+        } catch (altErr) {
+          console.log(`💥 Exception checking tasks table '${tableName}': ${altErr.message}`);
+        }
+      }
+
+      return [];
+    }
+    return data || [];
+  } catch (error) {
+    console.warn("Error connecting to PMS:", error);
+    throw error;
+  }
+};
