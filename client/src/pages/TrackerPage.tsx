@@ -217,7 +217,9 @@ export default function TrackerPage({ user }: TrackerPageProps) {
 
   const checkPlanAndNavigate = (targetUrl: string) => {
     const isToday = formattedDate === currentToday;
-    const needsPlan = isToday && !dailyPlanStatus?.submitted;
+    // Skip plan check when editing an existing entry (URL contains a task ID after /task-entry/)
+    const isEditing = /\/task-entry\/[^?]+/.test(targetUrl);
+    const needsPlan = isToday && !dailyPlanStatus?.submitted && !isEditing;
     if (needsPlan && targetUrl !== '/plan') {
       toast({
         title: 'Plan Required',
@@ -1137,20 +1139,18 @@ export default function TrackerPage({ user }: TrackerPageProps) {
         <div className="tracker-top-row flex justify-between items-start relative z-10 md:w-[70%]">
           <div>
             <h1 className="text-xl md:text-2xl font-bold tracking-tight tracker-greeting-title animate-fade-in" style={{ fontFamily: 'Space Grotesk' }}>
-              {currentTrackedTask ? (
-                <span className="inline-flex items-center gap-2">
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                  </span>
-                  {currentTrackedTask.title}
-                </span>
-              ) : (
-                <>Welcome back, {user.name} <span className="emoji-hand" style={{ display: 'inline-block' }}>👋</span></>
-              )}
+              <>Welcome back, {user.name} <span className="emoji-hand" style={{ display: 'inline-block' }}>👋</span></>
             </h1>
             <p className="text-xs md:text-sm mt-0.5 tracker-greeting-subtitle animate-fade-in">
-              {currentTrackedTask ? `Now tracking · ${currentTrackedTask.startTime} – ${currentTrackedTask.endTime}` : "Here's what's happening with your tasks today"}
+              {currentTrackedTask ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span>Now tracking <strong>{currentTrackedTask.title}</strong> · {currentTrackedTask.startTime} – {currentTrackedTask.endTime}</span>
+                </span>
+              ) : "Here's what's happening with your tasks today"}
             </p>
           </div>
 

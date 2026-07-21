@@ -272,7 +272,7 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     });
   };
 
-  /* ✅ ADDED – fetch tasks when project changes */
+  /* ✅ ADDED – fetch tasks when project or key step changes */
   useEffect(() => {
     async function fetchTasks() {
       if (!formData.project) {
@@ -298,7 +298,12 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
         const json = await res.json();
 
         if (Array.isArray(json)) {
-          setTasks(json);
+          const selectedKeyStep = keySteps.find(k => k.name === formData.keyStep);
+          if (selectedKeyStep) {
+            setTasks(json.filter((t: any) => t.key_step_id === selectedKeyStep.id));
+          } else {
+            setTasks(json);
+          }
         } else {
           setTasks([]);
         }
@@ -308,7 +313,7 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
       }
     }
     fetchTasks();
-  }, [formData.project, projects]);
+  }, [formData.project, formData.keyStep, projects, keySteps]);
 
   // Update pmsId and auto-select keyStep when task changes
   useEffect(() => {
@@ -410,6 +415,98 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     }
     fetchSubtasks();
   }, [formData.title, tasks]);
+
+  // Automatically select Project, Key Step, Task, and Subtask based on Plan of the Day selection on load/edit
+  const [hasAutoSelectedPlan, setHasAutoSelectedPlan] = useState(false);
+
+  useEffect(() => {
+    async function autoSelectPlanTask() {
+      if (hasAutoSelectedPlan || !dailyPlan?.tasks || projects.length === 0) return;
+
+      const plannedId = task?.pmsId || task?.id;
+      if (!plannedId) return;
+
+      const pt = dailyPlan.tasks.find((t: any) => t.taskId === plannedId || t.id === plannedId || t.taskName === task?.title);
+      if (!pt) return;
+
+      setHasAutoSelectedPlan(true);
+
+      try {
+        const projectName = pt.projectName;
+        const selectedProject = projects.find(p => p.project_name === projectName);
+        if (!selectedProject) return;
+
+        // Fetch Key Steps
+        const paramsKs = new URLSearchParams();
+        paramsKs.append('projectId', selectedProject.project_code);
+        if (authUser?.department) paramsKs.append('userDepartment', authUser.department);
+        const resKs = await fetch(`/api/key-steps?${paramsKs.toString()}`);
+        const keyStepsData = await resKs.json();
+        const mappedKeySteps = keyStepsData.map((k: any) => 
+          typeof k === 'string' ? { id: k, name: k } : { id: k.id || k.key || k.name, name: k.name || k.key || String(k) }
+        );
+        setKeySteps(mappedKeySteps);
+
+        // Fetch Tasks
+        const paramsT = new URLSearchParams();
+        paramsT.append('projectId', selectedProject.project_code);
+        if (authUser?.department || user?.department) paramsT.append('userDepartment', authUser?.department || user?.department || '');
+        if (authUser?.employeeCode || user?.employeeCode) paramsT.append('userEmpCode', authUser?.employeeCode || user?.employeeCode || '');
+        if (authUser?.role || user?.role) paramsT.append('userRole', authUser?.role || user?.role || '');
+        const resT = await fetch(`/api/tasks?${paramsT.toString()}`);
+        const tasksData = await resT.json();
+
+        const targetTask = tasksData.find((t: any) => t.id === pt.taskId || t.task_name === pt.taskName);
+        if (!targetTask) return;
+
+        let matchedKeyStepName = '';
+        if (targetTask.key_step_id) {
+          const ksObj = mappedKeySteps.find((k: any) => k.id === targetTask.key_step_id);
+          if (ksObj) matchedKeyStepName = ksObj.name;
+        }
+        const filteredTasks = tasksData.filter((t: any) => t.key_step_id === targetTask.key_step_id);
+        setTasks(filteredTasks.length > 0 ? filteredTasks : tasksData);
+
+        // Fetch Subtasks
+        const paramsS = new URLSearchParams();
+        paramsS.append('taskId', targetTask.id);
+        if (authUser?.department || user?.department) paramsS.append('userDepartment', authUser?.department || user?.department || '');
+        if (authUser?.employeeCode || user?.employeeCode) paramsS.append('userEmpCode', authUser?.employeeCode || user?.employeeCode || '');
+        const resS = await fetch(`/api/subtasks?${paramsS.toString()}`);
+        const subtasksData = await resS.json();
+        setSubtasks(subtasksData);
+
+        const planSched = typeof pt.scheduleData === 'string' ? JSON.parse(pt.scheduleData) : (pt.scheduleData || {});
+        const plannedSubtaskId = planSched.subtaskId || planSched.subtaskIds?.[0] || '';
+        const plannedSubtaskName = planSched.subtaskName || planSched.subtaskNames?.[0] || '';
+
+        let matchedSubtaskTitle = '';
+        if (plannedSubtaskId) {
+          const subObj = subtasksData.find((s: any) => s.id === plannedSubtaskId);
+          if (subObj) matchedSubtaskTitle = subObj.title;
+        }
+        if (!matchedSubtaskTitle && plannedSubtaskName) {
+          const subObj = subtasksData.find((s: any) => s.title === plannedSubtaskName);
+          if (subObj) matchedSubtaskTitle = subObj.title;
+        }
+
+        setFormData(prev => ({
+          ...prev,
+          project: projectName,
+          keyStep: matchedKeyStepName,
+          title: targetTask.task_name,
+          subTask: matchedSubtaskTitle,
+          pmsId: targetTask.id,
+          pmsSubtaskId: plannedSubtaskId || undefined,
+        }));
+
+      } catch (err) {
+        console.error('Error auto-selecting planned task on load:', err);
+      }
+    }
+
+    autoSelectPlanTask();
+  }, [dailyPlan, projects, task, authUser, user, hasAutoSelectedPlan]);
 
   const getCurrentISTTime = () => {
     const now = new Date();

@@ -617,7 +617,7 @@ export class DatabaseStorage implements IStorage {
     try {
       console.log("🌱 Seeding default employees...");
       const defaultEmployees = [
-        { employeeCode: "E0046", name: "Rebecasuji", email: "rebeca@ctint.in", password: "admin123", role: "admin", department: "Software" },
+        { employeeCode: "E0046", name: "Rebeca Suji", email: "rebeca@ctint.in", password: "admin123", role: "admin", department: "Software" },
         { employeeCode: "E0001", name: "Samprakash", email: "sp@ctint.in", password: "admin123", role: "admin", department: "Presales" },
         { employeeCode: "E0002", name: "Leo Celestine", email: "leo@ctint.in", password: "admin123", role: "admin", department: "Software" },
         { employeeCode: "E0041", name: "Mohanraj C", email: "mohan@ctint.in", password: "admin123", role: "employee", department: "Finance" },
@@ -640,6 +640,15 @@ export class DatabaseStorage implements IStorage {
         if (!existingCodes.has(emp.employeeCode)) {
           await this.createEmployee(emp);
           console.log(`Created missing employee: ${emp.employeeCode} (${emp.name})`);
+        } else {
+          // Correct any known name typos for existing records
+          const existing = existingEmployees.find(e => e.employeeCode === emp.employeeCode);
+          if (existing && existing.name !== emp.name) {
+            await db.update(employees)
+              .set({ name: emp.name })
+              .where(eq(employees.employeeCode, emp.employeeCode));
+            console.log(`Updated name for ${emp.employeeCode}: "${existing.name}" → "${emp.name}"`);
+          }
         }
       }
 

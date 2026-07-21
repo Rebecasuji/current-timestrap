@@ -111,10 +111,10 @@ function AuthenticatedApp() {
                 <AnalyticsPage user={user} />
               </Route>
               <Route path="/task-entry">
-                <TaskEntryPage />
+                <TaskEntryPage user={user} />
               </Route>
               <Route path="/task-entry/:id">
-                <TaskEntryPage />
+                <TaskEntryPage user={user} />
               </Route>
               {(user.role === 'manager' || user.role === 'hr' || user.role === 'admin') && (
                 <Route path="/approvals">
