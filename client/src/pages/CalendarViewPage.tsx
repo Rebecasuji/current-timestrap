@@ -1397,19 +1397,14 @@ export default function CalendarViewPage({ user }: CalendarViewPageProps) {
     let isMounted = true;
     const targetDate = format(selectedDate, "yyyy-MM-dd");
 
+    // PMS's calendar_events table is the single source of truth for this
+    // calendar: manual ("meeting") events AND plan-of-the-day ("task") rows,
+    // including breaks and ad-hoc entries, all live there once the plan is
+    // submitted (see the plan-sync block in /api/daily-plans). We no longer
+    // merge in the old `plan_schedule_*` / `pendingTasks_*` localStorage
+    // fallbacks — that data can go stale and disagrees with what PMS shows.
     const loadEvents = async () => {
       try {
-        let serverPlanTasks = [];
-        const res = await fetch(`/api/daily-plans/${targetDate}/${user.id}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.submitted && data.tasks) {
-            serverPlanTasks = data.tasks;
-          }
-        }
-
-        if (!isMounted) return;
-
         let manualEvents: CalendarEvent[] = [];
         try {
           if (user.employeeCode) {
@@ -1419,69 +1414,12 @@ export default function CalendarViewPage({ user }: CalendarViewPageProps) {
             }));
           }
         } catch (err) {
-          console.error("Failed to load manual calendar events from PMS:", err);
+          console.error("Failed to load calendar events from PMS:", err);
+          return; // keep whatever was previously loaded rather than clearing on a transient error
         }
 
-        // Filter out plan tasks that have already been synced to the DB,
-        // because the DB version (in manualEvents) has the true up-to-date times.
-        const dbPlanPmsIds = new Set(manualEvents.map(e => e.pmsId).filter(Boolean));
-
-        const scheduleKey = `plan_schedule_${user?.id}_${targetDate}`;
-        const scheduleTasks = readStoredArray(scheduleKey);
-        const legacyPlanTasks = readStoredArray(`pendingTasks_${user?.id}_${targetDate}`).filter(isPlanTask)
-          .filter((t: any) => !dbPlanPmsIds.has(t.taskId || t.id))
-          .map((t: any) => {
-            let scheduleData: any = {};
-            try {
-              scheduleData = typeof t.scheduleData === 'string' ? JSON.parse(t.scheduleData) : (t.scheduleData || {});
-            } catch (e) { }
-            return {
-              ...t,
-              startTime: scheduleData.startTime || t.startTime || "09:00",
-              endTime: scheduleData.endTime || t.endTime || "10:00",
-            };
-          });
-
-        // Use server tasks if available, otherwise fallback to local storage
-        let basePlanTasks = legacyPlanTasks;
-        if (serverPlanTasks.length > 0) {
-          basePlanTasks = serverPlanTasks
-            .filter((st: any) => !dbPlanPmsIds.has(st.hashedTaskId || st.taskId || st.id))
-            .map((st: any) => {
-            const taskId = st.hashedTaskId || st.taskId || st.id;
-            const localMatch = scheduleTasks.find((lt: any) => lt.pmsId === taskId || lt.id === taskId);
-
-            // Extract timings safely from scheduleData or fallbacks
-            let scheduleData: Record<string, any> = {};
-            try {
-              scheduleData = typeof st.scheduleData === 'string' ? JSON.parse(st.scheduleData) : (st.scheduleData || {});
-            } catch (e) { }
-
-            // localMatch reflects the most recent edit made directly on the Calendar
-            // page (drag-to-move, resize, etc.) and is kept in `plan_schedule_*`
-            // localStorage by persistPlanUpdate(). It is used here only as a fallback
-            // for events that haven't made it to the DB yet.
-            const startTime = (localMatch as any)?.startTime || scheduleData.startTime || st.startTime || "09:00";
-            const endTime = (localMatch as any)?.endTime || scheduleData.endTime || st.endTime || "10:00";
-
-            return {
-              ...st,
-              id: localMatch?.id || st.id || taskId,
-              pmsId: taskId,
-              googleEventId: localMatch?.googleEventId || st.googleEventId,
-              startTime,
-              endTime,
-            };
-          });
-        } else if (scheduleTasks.length > 0) {
-          basePlanTasks = scheduleTasks.filter((st: any) => !dbPlanPmsIds.has(st.pmsId || st.id));
-        }
-
-        const planEvents = mergePlanEvents(basePlanTasks, targetDate);
-
-        const mergedEvents = [...manualEvents, ...planEvents];
-        const unique = Array.from(new Map(mergedEvents.map((event) => [event.id, event])).values());
-        setEvents(unique);
+        if (!isMounted) return;
+        setEvents(manualEvents);
       } catch (err) {
         console.error("Failed to load events for calendar:", err);
       }
@@ -1489,10 +1427,15 @@ export default function CalendarViewPage({ user }: CalendarViewPageProps) {
 
     loadEvents();
 
+    // Poll so edits made on the PMS side (or from another device/tab) show
+    // up here without requiring a manual page refresh.
+    const intervalId = window.setInterval(loadEvents, 15000);
+
     return () => {
       isMounted = false;
+      window.clearInterval(intervalId);
     };
-  }, [selectedDate, user?.id]);
+  }, [selectedDate, user?.id, user?.employeeCode]);
 
   const refreshGoogleStatus = async () => {
     if (!user?.id) {

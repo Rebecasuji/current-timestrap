@@ -310,8 +310,12 @@ function mapRow(row: any): PmsCalendarEvent {
 // Returns BOTH manual ('meeting') and plan ('task') rows for the day — this
 // is the single shared read path both calendar UIs should use.
 export async function getCalendarEvents(employeeCode: string, date?: string): Promise<PmsCalendarEvent[]> {
+  console.log(`[PMS EVENT SYNC] getCalendarEvents called for employee: ${employeeCode}, date: ${date}`);
   const pmsUserId = await resolvePmsUserId(employeeCode);
-  if (!pmsUserId) return [];
+  if (!pmsUserId) {
+    console.log(`[PMS EVENT SYNC] getCalendarEvents Aborted: Could not resolve PMS user ID for employeeCode ${employeeCode}`);
+    return [];
+  }
 
   const selectColumns = await getCalendarEventSelectColumns();
   const params: any[] = [pmsUserId];
@@ -327,6 +331,7 @@ export async function getCalendarEvents(employeeCode: string, date?: string): Pr
   query += ` ORDER BY start_time ASC`;
 
   const result = await pmsPool.query(query, params);
+  console.log(`[PMS EVENT SYNC] getCalendarEvents fetched ${result.rows.length} rows for employee ${employeeCode}`);
   return result.rows.map(mapRow);
 }
 
@@ -483,9 +488,17 @@ export async function upsertPlanCalendarEvent(
   evt: Partial<PmsCalendarEvent> & { taskId: string },
   options: { matchBySlot?: boolean } = {}
 ): Promise<PmsCalendarEvent | null> {
-  if (!evt.taskId) return null;
+  console.log(`[PMS EVENT SYNC] Called upsertPlanCalendarEvent for employee: ${employeeCode}, task: ${evt.taskId}`);
+  if (!evt.taskId) {
+    console.log(`[PMS EVENT SYNC] Aborted: No taskId provided.`);
+    return null;
+  }
   const pmsUserId = await resolvePmsUserId(employeeCode);
-  if (!pmsUserId) return null;
+  if (!pmsUserId) {
+    console.log(`[PMS EVENT SYNC] Aborted: Could not resolve PMS user ID for employeeCode ${employeeCode}`);
+    return null;
+  }
+  console.log(`[PMS EVENT SYNC] Resolved PMS User ID: ${pmsUserId}`);
 
   const taskUuid = toTaskUuid(evt.taskId);
   const selectColumns = await getCalendarEventSelectColumns();
@@ -562,15 +575,19 @@ export async function upsertPlanCalendarEvent(
       WHERE id = $1 AND user_id = $2 AND source = 'app'
       RETURNING ${selectColumns.join(", ")}
     `;
+    console.log(`[PMS EVENT SYNC] Updating existing event ID: ${existing.rows[0].id}`);
     const result = await pmsPool.query(query, values);
-    if (result.rows.length === 0) return null;
+    if (result.rows.length === 0) {
+      console.log(`[PMS EVENT SYNC] Failed to update event ID: ${existing.rows[0].id}`);
+      return null;
+    }
+    console.log(`[PMS EVENT SYNC] Successfully updated event ID: ${existing.rows[0].id}`);
     return mapRow(result.rows[0]);
   }
 
   const insertPayload = await buildInsertPayload(evt);
   // Force plan-specific values and sanitize UUID fields
   insertPayload.calendar_type = "task";
-  insertPayload.task_title = evt.title || "Untitled task";
   insertPayload.task_id = taskUuid;
   // Guard project_id: only keep it if it's a proper UUID
   if (insertPayload.project_id && !UUID_RE.test(insertPayload.project_id)) {
@@ -587,7 +604,7 @@ export async function upsertPlanCalendarEvent(
     evt.endDate || evt.date,
     evt.startTime,
     evt.endTime,
-    evt.colorIdx !== undefined ? colorIdxToColorKey(evt.colorIdx) : null,
+    colorIdxToColorKey(evt.colorIdx ?? 0),
   ];
 
   Object.entries(insertPayload).forEach(([columnName, value]) => {
@@ -604,7 +621,9 @@ export async function upsertPlanCalendarEvent(
     VALUES (${placeholders.join(", ")})
     RETURNING ${selectColumns.join(", ")}
   `;
+  console.log(`[PMS EVENT SYNC] Inserting new event for task ${evt.taskId}`);
   const result = await pmsPool.query(query, insertValues);
+  console.log(`[PMS EVENT SYNC] Successfully inserted event ID: ${result.rows[0].id}`);
   return mapRow(result.rows[0]);
 }
 

@@ -7,8 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { UserPlus, Search, Edit2, Trash2, Shield, User as UserIcon, Users, Loader2, CheckCircle } from 'lucide-react';
+import { UserPlus, Search, Edit2, Trash2, Shield, ShieldCheck, User as UserIcon, Users, Loader2, CheckCircle } from 'lucide-react';
 import { User } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest, queryClient } from '@/lib/queryClient';
@@ -91,6 +92,39 @@ export default function UsersPage({ user }: UsersPageProps) {
       });
     },
   });
+
+  // Tool validation toggle mutation
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const toolValidationMutation = useMutation({
+    mutationFn: async ({ id, enforce }: { id: string; enforce: boolean }) => {
+      const response = await apiRequest('PATCH', `/api/employees/${id}/tool-validation`, { enforceToolValidation: enforce });
+      return response.json();
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/employees'] });
+      setTogglingId(null);
+      toast({
+        title: variables.enforce ? 'Tool Validation Enabled' : 'Tool Validation Disabled',
+        description: variables.enforce
+          ? 'This employee must now use tools verified in TimeGuard during entry time windows.'
+          : 'Tool validation is no longer enforced for this employee.',
+      });
+    },
+    onError: (error: any) => {
+      setTogglingId(null);
+      toast({
+        title: 'Failed to update setting',
+        description: error.message || 'Could not update tool validation setting.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const handleToggleToolValidation = (emp: Omit<Employee, 'password'>) => {
+    const nextValue = !emp.enforceToolValidation;
+    setTogglingId(emp.id);
+    toolValidationMutation.mutate({ id: emp.id, enforce: nextValue });
+  };
 
   const filteredUsers = employees.filter(u => 
     u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -226,6 +260,12 @@ export default function UsersPage({ user }: UsersPageProps) {
                     <TableHead className="text-blue-300 hidden md:table-cell">Department</TableHead>
                     <TableHead className="text-blue-300 hidden lg:table-cell">Group</TableHead>
                     <TableHead className="text-blue-300 hidden lg:table-cell">Line Manager</TableHead>
+                    <TableHead className="text-blue-300 hidden xl:table-cell" title="Enforce tool validation from TimeGuard for this employee's timesheet entries">
+                      <div className="flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+                        Tool Validation
+                      </div>
+                    </TableHead>
                     <TableHead className="text-blue-300 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -246,6 +286,22 @@ export default function UsersPage({ user }: UsersPageProps) {
                       <TableCell className="text-blue-200/60 hidden md:table-cell">{u.department || '-'}</TableCell>
                       <TableCell className="text-blue-200/60 hidden lg:table-cell">{u.groupName || '-'}</TableCell>
                       <TableCell className="text-blue-200/60 hidden lg:table-cell">{getManagerName(u.lineManagerId)}</TableCell>
+                      <TableCell className="hidden xl:table-cell">
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            id={`tool-validation-${u.id}`}
+                            checked={!!u.enforceToolValidation}
+                            disabled={togglingId === u.id}
+                            onCheckedChange={() => handleToggleToolValidation(u as any)}
+                            aria-label={`Toggle tool validation for ${u.name}`}
+                          />
+                          <span className={`text-xs font-medium ${u.enforceToolValidation ? 'text-emerald-400' : 'text-slate-400'}`}>
+                            {togglingId === u.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin inline" />
+                            ) : u.enforceToolValidation ? 'On' : 'Off'}
+                          </span>
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button size="icon" variant="ghost" className="text-blue-400 h-8 w-8">

@@ -105,6 +105,7 @@ export interface IStorage {
   createEmployee(employee: InsertEmployee): Promise<Employee>;
   validateEmployee(code: string, password: string): Promise<Employee | null>;
   updateEmployeePassword(code: string, passwordHash: string): Promise<Employee | undefined>;
+  updateEmployeeToolValidation(id: string, enforce: boolean): Promise<Employee | undefined>;
 
   // Time Entries
   getTimeEntries(): Promise<TimeEntry[]>;
@@ -426,6 +427,14 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await db.update(employees)
       .set({ password: passwordHash })
       .where(eq(employees.employeeCode, code.toUpperCase()))
+      .returning();
+    return updated;
+  }
+
+  async updateEmployeeToolValidation(id: string, enforce: boolean): Promise<Employee | undefined> {
+    const [updated] = await db.update(employees)
+      .set({ enforceToolValidation: enforce })
+      .where(eq(employees.id, id))
       .returning();
     return updated;
   }

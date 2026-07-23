@@ -402,11 +402,21 @@ export default function TrackerPage({ user }: TrackerPageProps) {
       queryClient.invalidateQueries({ queryKey: ['/api/time-entries/employee', user.id] });
       queryClient.invalidateQueries({ queryKey: ['/api/time-entries'] });
     },
-    onError: (error) => {
+    onError: (error: any) => {
+      // Parse the server error message if available (e.g. tool validation failure)
+      let description = 'Failed to submit task. Please try again.';
+      try {
+        const raw = error?.message || '';
+        const jsonStr = raw.substring(raw.indexOf('{'));
+        if (jsonStr) {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed?.error) description = parsed.error;
+        }
+      } catch { }
       toast({
-        title: "Error",
-        description: "Failed to submit task. Please try again.",
-        variant: "destructive",
+        title: 'Error',
+        description,
+        variant: 'destructive',
       });
     },
   });
@@ -425,11 +435,21 @@ export default function TrackerPage({ user }: TrackerPageProps) {
         description: "Your task has been updated successfully.",
       });
     },
-    onError: () => {
+    onError: (error: any) => {
+      // Parse the server error message if available (e.g. tool validation failure)
+      let description = 'Failed to update task. Only pending tasks can be edited.';
+      try {
+        const raw = error?.message || '';
+        const jsonStr = raw.substring(raw.indexOf('{'));
+        if (jsonStr) {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed?.error) description = parsed.error;
+        }
+      } catch { }
       toast({
-        title: "Error",
-        description: "Failed to update task. Only pending tasks can be edited.",
-        variant: "destructive",
+        title: 'Error',
+        description,
+        variant: 'destructive',
       });
     },
   });

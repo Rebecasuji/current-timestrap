@@ -85,6 +85,7 @@ export const employees = pgTable("employees", {
   lineManagerId: varchar("line_manager_id"),
   organisationId: varchar("organisation_id"),
   isActive: boolean("is_active").default(true).notNull(),
+  enforceToolValidation: boolean("enforce_tool_validation").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

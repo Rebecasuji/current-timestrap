@@ -6,6 +6,7 @@ import { promises as fs } from "fs";
 import fsSync from "fs";
 import path from "path";   // ✅ KEEP THIS
 import { pool } from "./db";
+import { validateToolUsage } from "./toolUsageValidation";
 import { pmsPool, saveSiteReportToPMS, getTasks, type PMSTask } from "./pmsSupabase";
 import {
   getCalendarEvents as getPmsCalendarEvents,
@@ -544,6 +545,26 @@ export async function registerRoutes(
     }
   });
 
+  // ============ EMPLOYEE TOOL VALIDATION SETTING ============
+  app.patch("/api/employees/:id/tool-validation", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { enforceToolValidation } = req.body;
+      if (typeof enforceToolValidation !== "boolean") {
+        return res.status(400).json({ error: "enforceToolValidation must be a boolean" });
+      }
+      const updated = await storage.updateEmployeeToolValidation(id, enforceToolValidation);
+      if (!updated) {
+        return res.status(404).json({ error: "Employee not found" });
+      }
+      const { password, ...safeEmp } = updated;
+      res.json(safeEmp);
+    } catch (error) {
+      console.error("Update tool validation error:", error);
+      res.status(500).json({ error: "Failed to update tool validation setting" });
+    }
+  });
+
   // ============ MANAGER ROUTES ============
   app.get("/api/managers", async (req, res) => {
     try {
@@ -978,6 +999,27 @@ export async function registerRoutes(
         return res.status(400).json({ error: result.error });
       }
 
+      // Validate selected tools against TimeGuard Agent's actual usage logs
+      // Only for employees who have enforceToolValidation enabled.
+      try {
+        const employee = await storage.getEmployee(entryData.employeeId);
+        if (employee && employee.enforceToolValidation) {
+          const toolCheck = await validateToolUsage(
+            entryData.employeeCode,
+            entryData.date,
+            entryData.startTime,
+            entryData.endTime,
+            entryData.toolsUsed
+          );
+          if (!toolCheck.valid) {
+            return res.status(400).json({ error: toolCheck.message });
+          }
+        }
+      } catch (toolValidationError) {
+        // Fail open: don't block a legitimate submission over a validation-check bug.
+        console.error("[TOOL-USAGE-VALIDATION] Error checking tool usage:", toolValidationError);
+      }
+
       // Plan for the Day Check (Only for today or future dates)
       const todayStr = new Date().toLocaleDateString('en-CA'); // 'YYYY-MM-DD' in local time equivalent using CA locale format or just ISO up to T
       // To ensure correct comparison, let's just use string comparison with today's date in YYYY-MM-DD
@@ -1131,6 +1173,27 @@ export async function registerRoutes(
       // Only allow editing draft or pending entries
       if (entry.status && !['draft', 'pending', 'rejected'].includes(entry.status)) {
         return res.status(403).json({ error: "Only pending or draft entries can be edited" });
+      }
+
+      // Validate selected tools against TimeGuard Agent's actual usage logs
+      // Only for employees who have enforceToolValidation enabled.
+      try {
+        const employee = await storage.getEmployee(entry.employeeId);
+        if (employee && employee.enforceToolValidation) {
+          const toolCheck = await validateToolUsage(
+            entry.employeeCode,
+            entry.date,
+            entryData.startTime || entry.startTime,
+            entryData.endTime || entry.endTime,
+            entryData.toolsUsed
+          );
+          if (!toolCheck.valid) {
+            return res.status(400).json({ error: toolCheck.message });
+          }
+        }
+      } catch (toolValidationError) {
+        // Fail open: don't block a legitimate edit over a validation-check bug.
+        console.error("[TOOL-USAGE-VALIDATION] Error checking tool usage:", toolValidationError);
       }
 
       // Update the time entry
@@ -2390,6 +2453,23 @@ export async function registerRoutes(
         return res.status(404).json({ error: "No plan found for this date" });
       }
 
+      // Remove the matching rows from PMS's shared calendar_events table so a
+      // deleted plan doesn't leave stale entries behind on either calendar.
+      // Best-effort: a failure here shouldn't block the plan deletion itself.
+      try {
+        const employee = await storage.getEmployee(employeeId);
+        if (employee?.employeeCode) {
+          const planTaskRows = await pool.query('SELECT task_id FROM plan_tasks WHERE plan_id = $1', [plan.id]);
+          for (const row of planTaskRows.rows) {
+            if (row.task_id) {
+              await deletePmsPlanCalendarEvent(employee.employeeCode, row.task_id);
+            }
+          }
+        }
+      } catch (pmsCleanupError) {
+        console.error(`Failed to clean up PMS calendar events for deleted plan ${plan.id}:`, pmsCleanupError);
+      }
+
       // Delete tasks associated with the plan
       await pool.query('DELETE FROM plan_tasks WHERE plan_id = $1', [plan.id]);
 
@@ -2487,8 +2567,9 @@ export async function registerRoutes(
   app.post("/api/daily-plans", async (req, res) => {
     try {
       const { employeeId, date, selectedTasks, unselectedTasks } = req.body;
-      const now = new Date();
-      const planDate = date || now.toISOString().split('T')[0];
+      const istNowForPlan = new Date(new Date().getTime() + (new Date().getTimezoneOffset() * 60000) + (5.5 * 60 * 60 * 1000));
+      const todayString = istNowForPlan.toISOString().split('T')[0];
+      const planDate = date || todayString;
 
       // Check if plan window is open (manual override has priority)
       const settings = await readSettings();
@@ -2643,27 +2724,44 @@ export async function registerRoutes(
 
       // Mirror the submitted plan into PMS's shared calendar_events table so
       // it shows up immediately in both Timestrap's and PMS's calendar views.
+      // calendar_events is the single source of truth for both calendars, so
+      // EVERY scheduled plan entry needs a row here — including built-in
+      // breaks ("break-*") and ad-hoc tasks ("planned-*") that don't map to a
+      // real PMS task id. upsertPlanCalendarEvent/toTaskUuid already derive a
+      // stable pseudo-UUID for those non-UUID ids, so they're safe to sync
+      // the same way as real PMS tasks.
       // Best-effort: a failure here shouldn't block the plan submission itself.
       if (employee?.employeeCode) {
+        console.log(`[SYNC] Starting plan sync for employee ${employee.employeeCode} with ${selectedTasks.length} tasks.`);
         for (const t of selectedTasks) {
           const tStart = t.scheduleData?.startTime || t.startTime || null;
           const tEnd = t.scheduleData?.endTime || t.endTime || null;
-          if (!tStart || !tEnd) continue; // skip tasks without a scheduled time slot
-          if (!t.id || t.id.startsWith('planned-') || t.id.startsWith('break-')) continue; // not a real PMS task id
+          if (!tStart || !tEnd) {
+            console.log(`[SYNC] Skipping task ${t.id} due to missing time slot.`);
+            continue; // skip tasks without a scheduled time slot
+          }
+          if (!t.id) {
+            console.log(`[SYNC] Skipping task due to missing id.`);
+            continue; // need some stable id to key the calendar row on
+          }
 
           try {
-            await upsertPmsPlanCalendarEvent(employee.employeeCode, {
+            console.log(`[SYNC] Calling upsertPmsPlanCalendarEvent for task ${t.id} (${tStart}-${tEnd}).`);
+            const syncedEvent = await upsertPmsPlanCalendarEvent(employee.employeeCode, {
               taskId: t.id,
-              title: t.task_name,
+              title: t.task_name || (t.id.startsWith('break-') ? 'Break' : 'Task'),
               project: t.projectName || t.project_code,
               date: planDate,
               startTime: tStart,
               endTime: tEnd,
             }, { matchBySlot: true });
+            console.log(`[SYNC] Successfully synced task ${t.id}. Event ID: ${syncedEvent?.id}`);
           } catch (pmsSyncError) {
-            console.error(`Failed to sync plan task ${t.id} to PMS calendar:`, pmsSyncError);
+            console.error(`[SYNC ERROR] Failed to sync plan task ${t.id} to PMS calendar:`, pmsSyncError);
           }
         }
+      } else {
+        console.warn(`[SYNC WARNING] No employee code found for ${employeeId}.`);
       }
 
       // Save unselected tasks as postponements

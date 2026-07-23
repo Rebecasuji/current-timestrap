@@ -511,8 +511,17 @@ export default function RejectionsPage({ user }: RejectionsPageProps) {
                     queryClient.invalidateQueries({ queryKey: isEmployee ? ['/api/time-entries/employee', user.id] : ['/api/time-entries'] });
                     toast({ title: "Resubmitted Successfully", description: "Your task has been updated and sent for manager approval." });
                     setEditingEntry(null);
-                  } catch (e) {
-                    toast({ title: "Error Resubmitting", description: "Failed to resubmit entry. Please try again.", variant: "destructive" });
+                  } catch (e: any) {
+                    let description = 'Failed to resubmit entry. Please try again.';
+                    try {
+                      const raw = e?.message || '';
+                      const jsonStr = raw.substring(raw.indexOf('{'));
+                      if (jsonStr) {
+                        const parsed = JSON.parse(jsonStr);
+                        if (parsed?.error) description = parsed.error;
+                      }
+                    } catch { }
+                    toast({ title: 'Error Resubmitting', description, variant: 'destructive' });
                   }
                 }}
                 onCancel={() => setEditingEntry(null)}
