@@ -123,6 +123,7 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
   const [dailyPlan, setDailyPlan] = useState<any>(null);
   const [isLoadingPlan, setIsLoadingPlan] = useState(true);
   const [showDeviationDialog, setShowDeviationDialog] = useState(false);
+  const [isSuggestingDescription, setIsSuggestingDescription] = useState(false);
   const [deviationReason, setDeviationReason] = useState('');
   const [selectedDeviationTask, setSelectedDeviationTask] = useState<any>(null);
 
@@ -541,6 +542,60 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     });
   };
 
+  const handleSuggestWorkSummary = async () => {
+    const employeeCode = (authUser as any)?.employeeCode || (user as any)?.employeeCode;
+    if (!employeeCode || !formData.startTime || !formData.endTime || !date) {
+      toast({
+        title: 'Missing info',
+        description: 'Start time and end time are required before suggesting a summary.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setIsSuggestingDescription(true);
+    try {
+      const params = new URLSearchParams({
+        employeeCode,
+        date,
+        startTime: formData.startTime,
+        endTime: formData.endTime,
+        project: formData.project || '',
+        taskTitle: formData.title || '',
+        subTask: formData.subTask || '',
+      });
+      const res = await fetch(`/api/timeguard/suggest-work-summary?${params.toString()}`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      if (data.noData) {
+        toast({
+          title: 'Nothing to suggest',
+          description: 'TimeGuard has no tracked activity for this employee during that window.',
+        });
+        return;
+      }
+      setFormData((prev) => ({
+        ...prev,
+        description: data.description || prev.description,
+        achievements: data.achievements || prev.achievements,
+        quantify: data.quantifyResult || prev.quantify,
+      }));
+      if (!data.description && !data.achievements && !data.quantifyResult) {
+        toast({
+          title: 'Nothing to suggest',
+          description: "TimeGuard's activity for this window wasn't specific enough to draft a summary — please fill these in manually.",
+        });
+      }
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Could not fetch a suggestion from TimeGuard right now.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSuggestingDescription(false);
+    }
+  };
+
   const validateForm = () => {
     const errs: string[] = [];
     if (!formData.project) errs.push('Project is required');
@@ -572,6 +627,12 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     if (formData.pmsSubtaskId) (payload as any).pmsSubtaskId = formData.pmsSubtaskId;
     try { playSound('confirm'); popEmoji(document.querySelector('[data-testid="button-save-task"]') as HTMLElement, '💾'); } catch { };
     onSave(payload);
+    // onSave hands off to the caller's own async save (which may fail, e.g. a
+    // tool-validation error) and does not stay mounted-and-locked waiting for
+    // it. Reset here so a failed save can be retried immediately instead of
+    // silently no-op'ing on the next click (isSubmitting would otherwise never
+    // clear once set).
+    setIsSubmitting(false);
     try {
       playSound('hurray');
       window.dispatchEvent(new CustomEvent('mascot:doll', { detail: { text: "Wow, really great!", x: 50, y: 30 } }));
@@ -972,9 +1033,21 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
           <hr className="tracker-form-divider" />
 
           <div className="space-y-2">
-            <Label htmlFor="description" className="text-blue-100 tracker-form-label">
-              Description <span className="text-blue-400/60 text-xs">(optional, max 35 words)</span>
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="description" className="text-blue-100 tracker-form-label">
+                Description <span className="text-blue-400/60 text-xs">(optional, max 35 words)</span>
+              </Label>
+              <button
+                type="button"
+                onClick={handleSuggestWorkSummary}
+                disabled={isSuggestingDescription}
+                className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                data-testid="button-suggest-description"
+                title="Fills Description, Achievements, and Quantify Your Result from TimeGuard's tracked activity"
+              >
+                {isSuggestingDescription ? 'Analyzing TimeGuard activity…' : '✨ Suggest from TimeGuard'}
+              </button>
+            </div>
             <Textarea
               id="description"
               placeholder="Describe the task (optional, max 35 words)..."

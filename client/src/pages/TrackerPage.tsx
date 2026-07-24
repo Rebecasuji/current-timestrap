@@ -63,17 +63,14 @@ export default function TrackerPage({ user }: TrackerPageProps) {
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const params = new URLSearchParams(window.location.search);
     const dateParam = params.get('date');
+    
     if (dateParam) {
       const parsedDate = new Date(dateParam);
       if (!isNaN(parsedDate.getTime())) {
-        localStorage.setItem('tracker_selected_date', dateParam);
+        // Clear the query parameter so refresh doesn't keep it
+        window.history.replaceState({}, '', window.location.pathname);
         return parsedDate;
       }
-    }
-    const storedDate = localStorage.getItem('tracker_selected_date');
-    if (storedDate) {
-      const parsedDate = new Date(storedDate);
-      if (!isNaN(parsedDate.getTime())) return parsedDate;
     }
     return new Date();
   });
@@ -217,9 +214,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
 
   const checkPlanAndNavigate = (targetUrl: string) => {
     const isToday = formattedDate === currentToday;
-    // Skip plan check when editing an existing entry (URL contains a task ID after /task-entry/)
-    const isEditing = /\/task-entry\/[^?]+/.test(targetUrl);
-    const needsPlan = isToday && !dailyPlanStatus?.submitted && !isEditing;
+    const needsPlan = isToday && !dailyPlanStatus?.submitted;
     if (needsPlan && targetUrl !== '/plan') {
       toast({
         title: 'Plan Required',
@@ -402,21 +397,11 @@ export default function TrackerPage({ user }: TrackerPageProps) {
       queryClient.invalidateQueries({ queryKey: ['/api/time-entries/employee', user.id] });
       queryClient.invalidateQueries({ queryKey: ['/api/time-entries'] });
     },
-    onError: (error: any) => {
-      // Parse the server error message if available (e.g. tool validation failure)
-      let description = 'Failed to submit task. Please try again.';
-      try {
-        const raw = error?.message || '';
-        const jsonStr = raw.substring(raw.indexOf('{'));
-        if (jsonStr) {
-          const parsed = JSON.parse(jsonStr);
-          if (parsed?.error) description = parsed.error;
-        }
-      } catch { }
+    onError: (error) => {
       toast({
-        title: 'Error',
-        description,
-        variant: 'destructive',
+        title: "Error",
+        description: "Failed to submit task. Please try again.",
+        variant: "destructive",
       });
     },
   });
@@ -435,21 +420,11 @@ export default function TrackerPage({ user }: TrackerPageProps) {
         description: "Your task has been updated successfully.",
       });
     },
-    onError: (error: any) => {
-      // Parse the server error message if available (e.g. tool validation failure)
-      let description = 'Failed to update task. Only pending tasks can be edited.';
-      try {
-        const raw = error?.message || '';
-        const jsonStr = raw.substring(raw.indexOf('{'));
-        if (jsonStr) {
-          const parsed = JSON.parse(jsonStr);
-          if (parsed?.error) description = parsed.error;
-        }
-      } catch { }
+    onError: () => {
       toast({
-        title: 'Error',
-        description,
-        variant: 'destructive',
+        title: "Error",
+        description: "Failed to update task. Only pending tasks can be edited.",
+        variant: "destructive",
       });
     },
   });
@@ -630,33 +605,6 @@ export default function TrackerPage({ user }: TrackerPageProps) {
     allTasks.filter(t => t.serverStatus === 'draft' || t.date === formattedDate),
     [allTasks, formattedDate]
   );
-
-  // Ticks every 30s so we can detect which planned task the employee should be
-  // actively tracking right now, based on its scheduled start/end time.
-  const [trackerNow, setTrackerNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setTrackerNow(new Date()), 30000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // The task whose scheduled window currently covers "now" — i.e. what the
-  // employee should be tracking work against at this moment.
-  const currentTrackedTask = useMemo(() => {
-    if (formattedDate !== currentToday) return null;
-    const toMin = (t?: string) => {
-      if (!t) return NaN;
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    };
-    const nowMinutes = trackerNow.getHours() * 60 + trackerNow.getMinutes();
-    const inWindow = todaysTasksOnly.filter(t => {
-      const s = toMin(t.startTime);
-      const e = toMin(t.endTime);
-      return Number.isFinite(s) && Number.isFinite(e) && nowMinutes >= s && nowMinutes < e;
-    });
-    // Prefer a task that's still an active draft (in progress / not yet finalized)
-    return inWindow.find(t => t.serverStatus === 'draft') || inWindow[0] || null;
-  }, [todaysTasksOnly, trackerNow, formattedDate, currentToday]);
 
   // Robust calculation of task duration (minutes)
   const calculateTaskMinutes = (task: Task): number => {
@@ -1159,18 +1107,10 @@ export default function TrackerPage({ user }: TrackerPageProps) {
         <div className="tracker-top-row flex justify-between items-start relative z-10 md:w-[70%]">
           <div>
             <h1 className="text-xl md:text-2xl font-bold tracking-tight tracker-greeting-title animate-fade-in" style={{ fontFamily: 'Space Grotesk' }}>
-              <>Welcome back, {user.name} <span className="emoji-hand" style={{ display: 'inline-block' }}>👋</span></>
+              Welcome back, {user.name} <span className="emoji-hand" style={{ display: 'inline-block' }}>👋</span>
             </h1>
             <p className="text-xs md:text-sm mt-0.5 tracker-greeting-subtitle animate-fade-in">
-              {currentTrackedTask ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <span>Now tracking <strong>{currentTrackedTask.title}</strong> · {currentTrackedTask.startTime} – {currentTrackedTask.endTime}</span>
-                </span>
-              ) : "Here's what's happening with your tasks today"}
+              Here's what's happening with your tasks today
             </p>
           </div>
 
@@ -1232,7 +1172,6 @@ export default function TrackerPage({ user }: TrackerPageProps) {
                       }
 
                       setSelectedDate(date);
-                      localStorage.setItem('tracker_selected_date', format(date, 'yyyy-MM-dd'));
                       loadTasksForDate(date);
                     }
                   }}

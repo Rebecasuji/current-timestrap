@@ -66,7 +66,7 @@ export interface ToolUsageValidationResult {
   message?: string;
 }
 
-function istDateTimeToUtcIso(date: string, time: string): string {
+export function istDateTimeToUtcIso(date: string, time: string): string {
   // date: "YYYY-MM-DD", time: "HH:mm" (or "HH:mm:ss")
   const normalizedTime = time.length === 5 ? `${time}:00` : time;
   // Asia/Kolkata is a fixed UTC+5:30 offset (no DST), so this is safe.
@@ -146,4 +146,189 @@ export async function validateToolUsage(
   }
 
   return { valid: true, invalidTools: [], actuallyUsedTools, skippedNoData: false };
+}
+
+export interface ToolActivitySummaryEntry {
+  toolName: string;
+  minutes: number;
+}
+
+export interface ToolActivitySummary {
+  entries: ToolActivitySummaryEntry[];
+  totalMinutes: number;
+  /** True if TimeGuard has no data at all for this employee/date. */
+  noData: boolean;
+}
+
+/**
+ * Aggregates TimeGuard's actual tool-usage durations (clipped to the entry's
+ * time window) for an employee/date/time-range — used to give the employee a
+ * factual starting draft for Description/Achievements. This never invents
+ * content; it only reports tool names and minutes TimeGuard actually logged,
+ * so the employee still writes the narrative themselves.
+ */
+export async function getToolActivitySummary(
+  employeeCode: string,
+  date: string,
+  startTime: string,
+  endTime: string
+): Promise<ToolActivitySummary> {
+  if (!timeguardPool || !employeeCode || !date || !startTime || !endTime) {
+    return { entries: [], totalMinutes: 0, noData: true };
+  }
+
+  let entryStartUtc: string;
+  let entryEndUtc: string;
+  try {
+    entryStartUtc = istDateTimeToUtcIso(date, startTime);
+    entryEndUtc = istDateTimeToUtcIso(date, endTime);
+  } catch {
+    return { entries: [], totalMinutes: 0, noData: true };
+  }
+
+  const result = await timeguardPool.query(
+    `SELECT tool_name,
+            GREATEST(start_time, $2::timestamptz) AS clipped_start,
+            LEAST(end_time, $3::timestamptz) AS clipped_end
+     FROM employee_tool_usage
+     WHERE employee_code = $1
+       AND start_time < $3::timestamptz
+       AND end_time > $2::timestamptz`,
+    [employeeCode, entryStartUtc, entryEndUtc]
+  );
+
+  if (result.rowCount === 0) {
+    return { entries: [], totalMinutes: 0, noData: true };
+  }
+
+  const minutesByTool = new Map<string, number>();
+  for (const row of result.rows as any[]) {
+    const mins = Math.max(
+      0,
+      (new Date(row.clipped_end).getTime() - new Date(row.clipped_start).getTime()) / 60000
+    );
+    const key = String(row.tool_name).trim();
+    minutesByTool.set(key, (minutesByTool.get(key) || 0) + mins);
+  }
+
+  const entries = Array.from(minutesByTool.entries())
+    .map(([toolName, minutes]) => ({ toolName, minutes: Math.round(minutes) }))
+    .filter((e) => e.minutes > 0)
+    .sort((a, b) => b.minutes - a.minutes);
+
+  return {
+    entries,
+    totalMinutes: entries.reduce((sum, e) => sum + e.minutes, 0),
+    noData: false,
+  };
+}
+
+export interface ActivityLogEntry {
+  activityType: string;
+  appName: string;
+  title: string;
+  windowTitle: string;
+  website: string;
+  url: string;
+  durationSeconds: number;
+  productive: boolean;
+}
+
+/**
+ * Pulls TimeGuard's raw activity_logs rows (window titles, URLs, app names —
+ * NOT just "which app was open") for an employee/date/time-window. This is
+ * the richer signal needed to infer what work was actually done, as opposed
+ * to getToolActivitySummary()'s app-time totals.
+ *
+ * activity_logs.employee_id is a uuid, unlike employee_tool_usage's text
+ * employee_code — so this first resolves employee_code -> employees.id via
+ * TimeGuard's own `employees` table before querying activity_logs.
+ *
+ * Rows are filtered to activity_type IN ('app','website') (skips idle/away),
+ * deduped/collapsed by (title/window_title/url), sorted by duration desc,
+ * and capped so the AI prompt built from this stays small and cheap.
+ */
+export async function getActivityLogEntries(
+  employeeCode: string,
+  date: string,
+  startTime: string,
+  endTime: string,
+  maxEntries = 40
+): Promise<ActivityLogEntry[]> {
+  if (!timeguardPool || !employeeCode || !date || !startTime || !endTime) {
+    return [];
+  }
+
+  let entryStartUtc: string;
+  let entryEndUtc: string;
+  try {
+    entryStartUtc = istDateTimeToUtcIso(date, startTime);
+    entryEndUtc = istDateTimeToUtcIso(date, endTime);
+  } catch {
+    return [];
+  }
+
+  const employeeResult = await timeguardPool.query(
+    `SELECT id FROM employees WHERE employee_code = $1 LIMIT 1`,
+    [employeeCode]
+  );
+  const employeeId = employeeResult.rows[0]?.id;
+  if (!employeeId) {
+    // No matching employee in TimeGuard's own employees table — nothing to fetch.
+    return [];
+  }
+
+  const result = await timeguardPool.query(
+    `SELECT activity_type,
+            COALESCE(app_name, '') AS app_name,
+            COALESCE(title, '') AS title,
+            COALESCE(window_title, '') AS window_title,
+            COALESCE(website, '') AS website,
+            COALESCE(url, '') AS url,
+            COALESCE(productive, productivity, true) AS productive,
+            GREATEST(
+              EXTRACT(EPOCH FROM (
+                LEAST(COALESCE(end_time, $3::timestamptz), $3::timestamptz)
+                - GREATEST(start_time, $2::timestamptz)
+              )),
+              0
+            ) AS clipped_duration_seconds
+     FROM activity_logs
+     WHERE employee_id = $1
+       AND activity_type IN ('app', 'website')
+       AND start_time < $3::timestamptz
+       AND COALESCE(end_time, start_time + make_interval(secs => COALESCE(duration_seconds, 0))) > $2::timestamptz
+     ORDER BY clipped_duration_seconds DESC
+     LIMIT $4`,
+    [employeeId, entryStartUtc, entryEndUtc, maxEntries]
+  );
+
+  // Collapse rows that share the same meaningful text (title/window_title/url)
+  // so the same file/page opened multiple times isn't repeated in the prompt.
+  const seen = new Map<string, ActivityLogEntry>();
+  for (const row of result.rows as any[]) {
+    const label = (row.window_title || row.title || row.url || row.website || row.app_name || "").trim();
+    if (!label) continue;
+    const key = `${row.app_name}::${label}`.toLowerCase();
+    const durationSeconds = Math.round(Number(row.clipped_duration_seconds) || 0);
+    const existing = seen.get(key);
+    if (existing) {
+      existing.durationSeconds += durationSeconds;
+    } else {
+      seen.set(key, {
+        activityType: row.activity_type,
+        appName: row.app_name,
+        title: row.title,
+        windowTitle: row.window_title,
+        website: row.website,
+        url: row.url,
+        durationSeconds,
+        productive: !!row.productive,
+      });
+    }
+  }
+
+  return Array.from(seen.values())
+    .filter((e) => e.durationSeconds > 0)
+    .sort((a, b) => b.durationSeconds - a.durationSeconds);
 }

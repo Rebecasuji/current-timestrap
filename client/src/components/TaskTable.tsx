@@ -81,7 +81,7 @@ export default function TaskTable({ tasks, onEdit, onDelete, onComplete, onReope
           <TableHeader>
             <TableRow className="border-white/5 hover:bg-transparent bg-white/5">
               <TableHead className="text-blue-200/50 font-bold uppercase tracking-wider text-[10px] py-4">Project</TableHead>
-              <TableHead className="text-blue-200/50 font-bold uppercase tracking-wider text-[10px] py-4">Task</TableHead>
+              <TableHead className="text-blue-200/50 font-bold uppercase tracking-wider text-[10px] py-4">Title</TableHead>
               <TableHead className="text-blue-200/50 font-bold uppercase tracking-wider text-[10px] py-4">Status</TableHead>
               <TableHead className="text-blue-200/50 font-bold uppercase tracking-wider text-[10px] py-4">Time</TableHead>
               <TableHead className="text-blue-200/50 font-bold uppercase tracking-wider text-[10px] py-4">Duration</TableHead>
@@ -182,7 +182,7 @@ export default function TaskTable({ tasks, onEdit, onDelete, onComplete, onReope
                   </div>
                 </TableCell>
                 <TableCell className="text-right">
-                  {(task.serverStatus === 'draft' || task.serverStatus === 'pending' || task.serverStatus === 'rejected') ? (
+                  {(task.serverStatus === 'draft' || task.serverStatus === 'rejected') ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button

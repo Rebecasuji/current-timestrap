@@ -260,7 +260,7 @@ export default function UsersPage({ user }: UsersPageProps) {
                     <TableHead className="text-blue-300 hidden md:table-cell">Department</TableHead>
                     <TableHead className="text-blue-300 hidden lg:table-cell">Group</TableHead>
                     <TableHead className="text-blue-300 hidden lg:table-cell">Line Manager</TableHead>
-                    <TableHead className="text-blue-300 hidden xl:table-cell" title="Enforce tool validation from TimeGuard for this employee's timesheet entries">
+                    <TableHead className="text-blue-300 hidden md:table-cell" title="Enforce tool validation from TimeGuard for this employee's timesheet entries">
                       <div className="flex items-center gap-1.5">
                         <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
                         Tool Validation
@@ -286,7 +286,7 @@ export default function UsersPage({ user }: UsersPageProps) {
                       <TableCell className="text-blue-200/60 hidden md:table-cell">{u.department || '-'}</TableCell>
                       <TableCell className="text-blue-200/60 hidden lg:table-cell">{u.groupName || '-'}</TableCell>
                       <TableCell className="text-blue-200/60 hidden lg:table-cell">{getManagerName(u.lineManagerId)}</TableCell>
-                      <TableCell className="hidden xl:table-cell">
+                      <TableCell className="hidden md:table-cell">
                         <div className="flex items-center gap-2">
                           <Switch
                             id={`tool-validation-${u.id}`}

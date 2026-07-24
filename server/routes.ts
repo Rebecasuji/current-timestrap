@@ -6,7 +6,8 @@ import { promises as fs } from "fs";
 import fsSync from "fs";
 import path from "path";   // ✅ KEEP THIS
 import { pool } from "./db";
-import { validateToolUsage } from "./toolUsageValidation";
+import { validateToolUsage, getToolActivitySummary } from "./toolUsageValidation";
+import { suggestWorkSummaryFromTimeGuard } from "./aiActivitySummary";
 import { pmsPool, saveSiteReportToPMS, getTasks, type PMSTask } from "./pmsSupabase";
 import {
   getCalendarEvents as getPmsCalendarEvents,
@@ -545,6 +546,50 @@ export async function registerRoutes(
     }
   });
 
+  // ============ TIMEGUARD ACTIVITY SUMMARY (for Description/Achievements autofill) ============
+  // Returns tool usage minutes TimeGuard actually logged for the given
+  // employee/date/time-window — factual data only, never invents content.
+  app.get("/api/timeguard/activity-summary", async (req, res) => {
+    try {
+      const { employeeCode, date, startTime, endTime } = req.query as Record<string, string>;
+      if (!employeeCode || !date || !startTime || !endTime) {
+        return res.status(400).json({ error: "employeeCode, date, startTime, and endTime are required" });
+      }
+      const summary = await getToolActivitySummary(employeeCode, date, startTime, endTime);
+      res.json(summary);
+    } catch (error) {
+      console.error("Get TimeGuard activity summary error:", error);
+      res.status(500).json({ error: "Failed to fetch TimeGuard activity summary" });
+    }
+  });
+
+  // ============ AI-DRAFTED WORK SUMMARY (from TimeGuard activity_logs) ============
+  // Infers what work was actually done (not just which apps were open) from
+  // TimeGuard's window titles/URLs/file names, and drafts Description,
+  // Achievements, and Quantify Your Result. Always a suggestion the employee
+  // reviews/edits — never auto-saved as final.
+  app.get("/api/timeguard/suggest-work-summary", async (req, res) => {
+    try {
+      const { employeeCode, date, startTime, endTime, project, taskTitle, subTask } = req.query as Record<string, string>;
+      if (!employeeCode || !date || !startTime || !endTime) {
+        return res.status(400).json({ error: "employeeCode, date, startTime, and endTime are required" });
+      }
+      const result = await suggestWorkSummaryFromTimeGuard({
+        employeeCode,
+        date,
+        startTime,
+        endTime,
+        project,
+        taskTitle,
+        subTask,
+      });
+      res.json(result);
+    } catch (error) {
+      console.error("Suggest work summary error:", error);
+      res.status(500).json({ error: "Failed to generate work summary suggestion" });
+    }
+  });
+
   // ============ EMPLOYEE TOOL VALIDATION SETTING ============
   app.patch("/api/employees/:id/tool-validation", async (req, res) => {
     try {
@@ -1003,6 +1048,9 @@ export async function registerRoutes(
       // Only for employees who have enforceToolValidation enabled.
       try {
         const employee = await storage.getEmployee(entryData.employeeId);
+        console.log(
+          `[TOOL-USAGE-VALIDATION][CREATE] employeeId=${entryData.employeeId} enforceToolValidation=${employee?.enforceToolValidation} tools=${JSON.stringify(entryData.toolsUsed)}`
+        );
         if (employee && employee.enforceToolValidation) {
           const toolCheck = await validateToolUsage(
             entryData.employeeCode,
@@ -1011,6 +1059,7 @@ export async function registerRoutes(
             entryData.endTime,
             entryData.toolsUsed
           );
+          console.log(`[TOOL-USAGE-VALIDATION][CREATE] result=${JSON.stringify(toolCheck)}`);
           if (!toolCheck.valid) {
             return res.status(400).json({ error: toolCheck.message });
           }
@@ -1179,6 +1228,9 @@ export async function registerRoutes(
       // Only for employees who have enforceToolValidation enabled.
       try {
         const employee = await storage.getEmployee(entry.employeeId);
+        console.log(
+          `[TOOL-USAGE-VALIDATION][UPDATE] entryId=${id} employeeId=${entry.employeeId} enforceToolValidation=${employee?.enforceToolValidation} tools=${JSON.stringify(entryData.toolsUsed)}`
+        );
         if (employee && employee.enforceToolValidation) {
           const toolCheck = await validateToolUsage(
             entry.employeeCode,
@@ -1187,6 +1239,7 @@ export async function registerRoutes(
             entryData.endTime || entry.endTime,
             entryData.toolsUsed
           );
+          console.log(`[TOOL-USAGE-VALIDATION][UPDATE] result=${JSON.stringify(toolCheck)}`);
           if (!toolCheck.valid) {
             return res.status(400).json({ error: toolCheck.message });
           }

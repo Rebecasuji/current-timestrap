@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLocation, useParams } from 'wouter';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import TaskForm from '@/components/TaskForm';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/ui/card';
@@ -8,6 +8,36 @@ import { Loader2, ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
 import { Task } from '@/components/TaskTable';
+import { apiRequest, queryClient } from '@/lib/queryClient';
+import { useToast } from '@/hooks/use-toast';
+
+const formatDuration = (minutes: number): string => {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins}m`;
+};
+
+const formatTaskDescription = (task: any) => {
+  let desc = task.title;
+  if (task.subTask) desc += ' | ' + task.subTask;
+  else desc += ' | ';
+  if (task.description) desc += ' | ' + task.description;
+  return desc;
+};
+
+// Pulls the server's JSON error message (e.g. a tool-validation failure)
+// out of the Error thrown by apiRequest, falling back to a generic message.
+const extractServerErrorMessage = (error: any, fallback: string): string => {
+  try {
+    const raw = error?.message || '';
+    const jsonStr = raw.substring(raw.indexOf('{'));
+    if (jsonStr) {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed?.error) return typeof parsed.error === 'string' ? parsed.error : fallback;
+    }
+  } catch { }
+  return fallback;
+};
 
 // Parse task description that may contain task and subtask
 const parseTaskDescription = (taskDesc: string) => {
@@ -31,7 +61,8 @@ export default function TaskEntryPage() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
   const { user } = useAuth();
-  
+  const { toast } = useToast();
+
   // Get date from URL or use today
   const searchParams = new URLSearchParams(window.location.search);
   const dateParam = searchParams.get('date') || format(new Date(), 'yyyy-MM-dd');
@@ -68,8 +99,87 @@ export default function TaskEntryPage() {
     } as Task;
   }
 
-  const handleSave = () => {
-    setLocation(`/tracker?date=${dateParam}`);
+  const updateMutation = useMutation({
+    mutationFn: async (taskData: Task) => {
+      const response = await apiRequest('PUT', `/api/time-entries/${id}`, {
+        projectName: taskData.project,
+        taskDescription: formatTaskDescription(taskData),
+        problemAndIssues: (taskData as any).problemAndIssues || '',
+        quantify: (taskData as any).quantify || '',
+        achievements: (taskData as any).achievements || '',
+        scopeOfImprovements: (taskData as any).scopeOfImprovements || '',
+        toolsUsed: taskData.toolsUsed || [],
+        startTime: taskData.startTime,
+        endTime: taskData.endTime,
+        totalHours: formatDuration(taskData.durationMinutes),
+        percentageComplete: taskData.percentageComplete,
+        pmsId: (taskData as any).pmsId,
+        pmsSubtaskId: (taskData as any).pmsSubtaskId,
+        keyStep: (taskData as any).keyStep,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/time-entries/employee', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['/api/time-entries'] });
+      toast({ title: 'Task Updated', description: 'Your task has been updated successfully.' });
+      setLocation(`/tracker?date=${dateParam}`);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: extractServerErrorMessage(error, 'Failed to update task. Only pending tasks can be edited.'),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (taskData: Task) => {
+      const response = await apiRequest('POST', '/api/time-entries', {
+        employeeId: user?.id,
+        employeeCode: (user as any)?.employeeCode,
+        employeeName: (user as any)?.name,
+        date: dateParam,
+        projectName: taskData.project,
+        taskDescription: formatTaskDescription(taskData),
+        problemAndIssues: (taskData as any).problemAndIssues || '',
+        quantify: (taskData as any).quantify || '',
+        achievements: (taskData as any).achievements || '',
+        scopeOfImprovements: (taskData as any).scopeOfImprovements || '',
+        toolsUsed: taskData.toolsUsed || [],
+        startTime: taskData.startTime,
+        endTime: taskData.endTime,
+        totalHours: formatDuration(taskData.durationMinutes),
+        percentageComplete: taskData.percentageComplete,
+        pmsId: (taskData as any).pmsId,
+        pmsSubtaskId: (taskData as any).pmsSubtaskId,
+        keyStep: (taskData as any).keyStep,
+        status: 'pending',
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/time-entries/employee', user?.id] });
+      queryClient.invalidateQueries({ queryKey: ['/api/time-entries'] });
+      toast({ title: 'Task Saved', description: 'Your task has been logged successfully.' });
+      setLocation(`/tracker?date=${dateParam}`);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: extractServerErrorMessage(error, 'Failed to save task. Please try again.'),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const handleSave = (taskData: Task) => {
+    if (id) {
+      updateMutation.mutate(taskData);
+    } else {
+      createMutation.mutate(taskData);
+    }
   };
 
   const handleCancel = () => {
