@@ -65,17 +65,38 @@ function formatFallbackFromToolSummary(activity: ToolActivitySummary): {
   if (activity.entries.length === 0) {
     return { description: "", achievements: "", quantifyResult: "" };
   }
-  const parts = activity.entries.map((e) => `${e.toolName} (${e.minutes}m)`);
-  return {
-    description: `Tools used: ${parts.join(", ")}.`,
-    achievements: "",
-    quantifyResult: "",
-  };
+
+  // Without an OpenAI key (or without rich activity_logs signal) we can't
+  // infer a narrative, but we still have real tool/time data — so build a
+  // grounded multi-line summary from it instead of a single flat sentence.
+  const topEntries = activity.entries.slice(0, 3);
+  const toolLines = topEntries.map((e) => `${e.toolName} (${e.minutes}m)`);
+
+  const description = [
+    `Worked across ${activity.entries.length} tool${activity.entries.length === 1 ? "" : "s"} during this session, totaling ${activity.totalMinutes} tracked minutes.`,
+    `Primary tools used: ${toolLines.join(", ")}.`,
+  ].join("\n");
+
+  const achievements = topEntries
+    .map((e) => `- Actively worked in ${e.toolName} for ${e.minutes} minute${e.minutes === 1 ? "" : "s"}.`)
+    .join("\n");
+
+  const quantifyResult = [
+    `- ${activity.entries.length} tool${activity.entries.length === 1 ? "" : "s"} used`,
+    `- ${activity.totalMinutes} total minutes tracked`,
+    topEntries[0] ? `- Most-used tool: ${topEntries[0].toolName} (${topEntries[0].minutes}m)` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { description, achievements, quantifyResult };
 }
 
 /**
- * Drafts Description / Achievements / Quantify-Your-Result suggestions from
- * TimeGuard's tracked activity for this employee/date/time-window.
+ * Drafts detailed Description / Achievements / Quantify-Your-Result
+ * suggestions from TimeGuard's tracked activity for this employee/date/
+ * time-window. Each field is 2-3 lines/points covering the distinct threads
+ * of work visible in the log, not a single flat sentence.
  *
  * Uses activity_logs (window titles, URLs, file/page names) as the primary
  * signal — this is what actually lets the model infer real work ("visitor
@@ -84,7 +105,7 @@ function formatFallbackFromToolSummary(activity: ToolActivitySummary): {
  *
  * The model is explicitly instructed to ground every claim — especially any
  * number in Quantify Your Result — in something actually present in the
- * logs, and to leave a field blank rather than invent specifics it has no
+ * logs, and to write fewer points rather than invent specifics it has no
  * basis for. These are always suggestions the employee reviews and edits,
  * never auto-saved as final.
  */
@@ -128,19 +149,30 @@ export async function suggestWorkSummaryFromTimeGuard(
             "with how long each was open. Infer what work was plausibly being done from these specifics " +
             "(e.g. a window titled 'VisitorRegistrationController.ts — VS Code' implies work on a visitor " +
             "registration feature; a browser tab titled 'Pull Request #42 · api-validation' implies a PR/API " +
-            "validation task). Do NOT just restate app names and durations — infer the underlying work.\n\n" +
+            "validation task). Do NOT just restate app names and durations — infer the underlying work, and " +
+            "cover the DISTINCT threads of work visible in the log (different files, tickets, pages, features) " +
+            "rather than collapsing everything into one generic line.\n\n" +
             "STRICT GROUNDING RULE: only state something if it is directly supported by a specific title, " +
             "filename, URL, or page name in the log. Do not invent outcomes, counts, or specifics that aren't " +
-            "traceable to something in the log. If the log is too vague to support a claim, leave that field " +
-            "empty or write less rather than guess.\n\n" +
+            "traceable to something in the log. If the log only supports one or two points for a field, write " +
+            "just that many rather than padding with a vague or repeated point. Keep every line concise (max " +
+            "~15 words) so the full response fits a tight token budget.\n\n" +
             "Output STRICT JSON only, no markdown, no preamble, with exactly these keys:\n" +
             '{"description": string, "achievements": string, "quantifyResult": string}\n' +
-            "- description: 1 sentence (max 30 words), plain factual summary of the work performed.\n" +
-            "- achievements: 1 sentence (max 30 words) phrasing the same evidence as completed items " +
-            "(e.g. 'Completed X, validated Y, resolved Z'), grounded only in what the log shows.\n" +
-            "- quantifyResult: SHORT, e.g. '3 files edited, 2 pages reviewed' — ONLY counts you can " +
-            "actually derive by counting distinct titles/files/URLs/PRs/tickets in the log. If you cannot " +
-            "ground any number, return an empty string for this field rather than guessing a number.",
+            "- description: 2-3 factual sentences, EACH ON ITS OWN LINE (separated by \\n), giving a detailed " +
+            "narrative of the work performed during this session — what was worked on, on which files/pages/" +
+            "tickets, and roughly in what order if inferable from the log.\n" +
+            "- achievements: 2-3 bullet points, EACH ON ITS OWN LINE prefixed with '- ', phrasing the log's " +
+            "evidence as distinct completed accomplishments (e.g. '- Completed the visitor registration form " +
+            "validation', '- Reviewed and merged pull request #42', '- Resolved the login redirect bug'). Each " +
+            "point must be a specific, distinct accomplishment grounded in the log — not a restatement of app names.\n" +
+            "- quantifyResult: 2-3 bullet points, EACH ON ITS OWN LINE prefixed with '- ', giving MEASURABLE " +
+            "results — tasks completed, bugs fixed, APIs/endpoints developed, features implemented, files edited, " +
+            "PRs reviewed, tickets closed, pages built, etc. — that you can actually derive by counting distinct " +
+            "titles/files/URLs/PRs/tickets in the log (e.g. '- 3 files edited', '- 2 API endpoints touched', " +
+            "'- 1 bug ticket resolved'). Only include a bullet if you can ground it in a specific count from the " +
+            "log; if you cannot ground even one measurable item, return an empty string for this field rather " +
+            "than guessing a number.",
         },
         {
           role: "user",

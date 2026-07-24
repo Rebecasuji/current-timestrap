@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AlertCircle, Target, ArrowRight } from "lucide-react";
+import { TOOLS_LIST } from "@shared/toolCategories";
 
 interface Task {
   id?: string;
@@ -53,22 +54,6 @@ interface TaskFormProps {
   saveButtonText?: string;
   date?: string;
 }
-
-const TOOLS_LIST = [
-  'Adobe Scanner', 'Airtable', 'Android Studio', 'Angular', 'AWS', 'Azure',
-  'Antigravity', 'Amazon', 'Bitbucket', 'BrowserStack', 'Calls/Phone',
-  'Canva', 'ChatGPT', 'Chrome', 'Claude', 'Copilot', 'Whatsapp', 'Confluence', 'CSS', 'Docker',
-  'Drizzle', 'Emails', 'ESLint', 'Excel', 'Express', 'Figma', 'Firebase', 'Firefox',
-  'Flutter', 'Gemini', 'Git', 'GitHub', 'GitLab', 'Google', 'Google Calendar', 'Google Keep',
-  'Google Maps', 'Google Play Console', 'Google Tasks', 'Grafana', 'GSAP', 'GST Portal', 'Heroku', 'Hostinger', 'HTML',
-  'IncomeTax Portal', 'Indeed', 'InVision', 'JavaScript', 'Jenkins', 'Jest', 'Jira', 'Kubernetes', 'LinkedIn', 'Loom',
-  'Lucide Icons', 'Meeting Others', 'Meeting with Teams', 'Miro', 'MongoDB', 'MS Office', 'MS Teams',
-  'MySQL', 'Naukri', 'Netlify', 'Next.js', 'Node.js', 'Notes', 'Notion', 'OpenAI', 'Others', 'Outlook',
-  'Porter', 'PostgreSQL', 'Postman', 'Promilo', 'PPT', 'Prettier', 'Prisma', 'React', 'Redis', 'Redux', 'Safari', 'Sentry',
-  'Shadcn/UI', 'Shine', 'Slack', 'Storybook', 'Supabase', 'Swift', 'Tailwind CSS', 'TanStack Query', 'Traces',
-  'TimeChamp', 'Trello', 'TypeScript', 'Unolo', 'Vercel', 'Vite', 'VS Code', 'Vue', 'Web Browser', 'Word',
-  'WorkIndia', 'Wouter', 'XCode', 'Zapier', 'Zeplin', 'Zoho Books', 'Zoho Cliq', 'Zoho Expenses'
-].sort();
 
 /* ✅ NEW – project type (does NOT remove anything) */
 type Project = {

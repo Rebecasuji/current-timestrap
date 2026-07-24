@@ -359,6 +359,12 @@ export const planTasks = pgTable("plan_tasks", {
   source: text("source").default("Manual"), // "Manual" or "PMS"
   isLocked: boolean("is_locked").default(false),
   scheduleData: jsonb("schedule_data"),
+  // Tool the employee expects to use for this planned task (e.g. "VS Code",
+  // "Meeting with Teams", "Client Call"). Feeds TimeGuard tool-usage
+  // validation: meeting/call/discussion/review/training-style tools skip
+  // validation, since TimeGuard has no app/window activity to check them
+  // against. See shared/toolCategories.ts.
+  tool: text("tool"),
 });
 
 export const insertDailyPlanSchema = createInsertSchema(dailyPlans).omit({
@@ -463,5 +469,3 @@ export const chatSessions = pgTable("chat_sessions", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-
-

@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { TOOLS_LIST, isNonDevelopmentTool } from '@shared/toolCategories';
 
 export default function PlanForDayPage() {
   const { user } = useAuth();
@@ -243,6 +244,23 @@ export default function PlanForDayPage() {
     }));
   };
 
+  const updateTaskTools = (instanceId: string, tools: string[]) => {
+    setSelectedTasks(prev => prev.map(task => {
+      if (task.instanceId !== instanceId) return task;
+      const joined = tools.length > 0 ? tools.join(', ') : undefined;
+      return {
+        ...task,
+        tool: joined,
+        tools: tools.length > 0 ? tools : undefined,
+        scheduleData: {
+          ...(task.scheduleData || {}),
+          tool: joined || null,
+          tools: tools.length > 0 ? tools : null,
+        },
+      };
+    }));
+  };
+
   const setTaskDuration = (instanceId: string, durationMin: number) => {
     setSelectedTasks(prev => buildScheduledTasks(prev.map(task => {
       if (task.instanceId !== instanceId) return task;
@@ -401,6 +419,10 @@ export default function PlanForDayPage() {
         projectDescription: task.projectName,
         source: task.source || 'Manual',
         isLocked: !!task.isLocked || task.source === 'PMS',
+        tool: task.tool || undefined,
+        tools: Array.isArray(task.tools)
+          ? task.tools
+          : (task.tool ? task.tool.split(',').map((s: string) => s.trim()).filter(Boolean) : undefined),
         scheduleData: typeof task.scheduleData === 'string' ? JSON.parse(task.scheduleData) : (task.scheduleData || {}),
       }));
       setSelectedTasks(buildScheduledTasks(existingTasks));
@@ -945,6 +967,20 @@ export default function PlanForDayPage() {
                         />
                       )}
 
+                      {!task.isBreak && (
+                        <ToolSelect
+                          values={
+                            task.tools
+                            || task.scheduleData?.tools
+                            || (() => {
+                              const legacy = task.tool || task.scheduleData?.tool || '';
+                              return legacy ? legacy.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+                            })()
+                          }
+                          onChange={(tools) => updateTaskTools(task.instanceId, tools)}
+                        />
+                      )}
+
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-[10px] uppercase text-slate-500 font-bold">Duration</p>
@@ -1122,6 +1158,11 @@ function HistorySection({ historyDate, setHistoryDate, isLoadingHistory, history
                   const start = formatTime12h(schedule.startTime || t.startTime);
                   const end = formatTime12h(schedule.endTime || t.endTime);
                   const subtaskName = schedule.subtaskName || t.subtaskName;
+                  const toolNames: string[] = Array.isArray(t.tools) && t.tools.length > 0
+                    ? t.tools
+                    : Array.isArray(schedule.tools) && schedule.tools.length > 0
+                      ? schedule.tools
+                      : (t.tool || schedule.tool || '').split(',').map((s: string) => s.trim()).filter(Boolean);
                   return (
                     <div key={t.id} className="p-4 rounded-xl bg-slate-800/50 border border-slate-700/50">
                       <div className="flex items-start justify-between gap-3">
@@ -1129,6 +1170,15 @@ function HistorySection({ historyDate, setHistoryDate, isLoadingHistory, history
                           <h4 className="font-bold text-slate-100">{t.taskName}</h4>
                           <p className="text-xs text-slate-400 uppercase font-bold">{t.projectName}</p>
                           {subtaskName && <p className="text-[11px] text-blue-300/80 mt-1">↳ {subtaskName}</p>}
+                          {toolNames.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                              {toolNames.map((tn) => (
+                                <span key={tn} className="inline-flex items-center gap-1 text-[10px] bg-slate-700/40 border border-slate-600/40 text-slate-300 rounded px-1.5 py-0.5">
+                                  🛠 {tn}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         {(start && end) && (
                           <span className="text-[10px] font-mono text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-1 rounded-lg whitespace-nowrap shrink-0">
@@ -1155,6 +1205,182 @@ function HistorySection({ historyDate, setHistoryDate, isLoadingHistory, history
 // with the task; filtering by assignee here would hide subtasks that genuinely belong to
 // the task. Switching tasks always reloads only that task's subtasks (query key includes
 // taskId, and the query is disabled without one).
+// Searchable multi-select for the Plan for the Day's "Tool Selection" field.
+// A task can genuinely involve more than one tool in a session (e.g. VS Code +
+// Postman, or a meeting tool alongside a dev tool), so this supports checking
+// several at once rather than forcing a single pick. Mirrors SubtaskSelect's
+// dropdown chrome (absolute panel, click-outside to close, checkbox rows, chip
+// summary) for visual consistency, and keeps ToolSelect's search box since
+// TOOLS_LIST is long. Selections are joined into a comma-separated "tool"
+// string by the caller for backward compatibility with the auto-generated
+// draft time entry's "Tools Used" field (see server route for POST
+// /api/daily-plans) — whatever is picked here shows up pre-filled when the
+// employee opens that entry to edit in the Tracker, letting TimeGuard
+// validate against the same tools the plan recorded.
+function ToolSelect({ values = [], onChange }: { values: string[]; onChange: (tools: string[]) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-tool-dropdown]')) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const filteredTools = TOOLS_LIST.filter((tool) =>
+    tool.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const toggleTool = (tool: string) => {
+    const next = values.includes(tool)
+      ? values.filter((t) => t !== tool)
+      : [...values, tool];
+    onChange(next);
+  };
+
+  const clearAll = () => onChange([]);
+
+  const selectAllFiltered = () => {
+    const merged = Array.from(new Set([...values, ...filteredTools]));
+    onChange(merged);
+  };
+
+  const hasNonDevSelection = values.some((v) => isNonDevelopmentTool(v));
+
+  const displayLabel = values.length === 0
+    ? 'Select tools...'
+    : values.length === 1
+      ? values[0]
+      : `${values.length} tools selected`;
+
+  return (
+    <div data-tool-dropdown className="relative">
+      <div className="flex items-center justify-between">
+        <label className="text-[10px] uppercase text-slate-400 font-bold">Tool Selection</label>
+        {values.length > 0 && (
+          <span className="text-[9px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded-full px-1.5 leading-4">
+            {values.length}
+          </span>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className={`w-full h-9 rounded-md border bg-slate-950 px-3 text-sm text-left flex items-center justify-between gap-2 outline-none transition-colors ${isOpen ? 'border-blue-500' : 'border-slate-800 hover:border-slate-700'} text-slate-200`}
+      >
+        <span className={`truncate ${values.length ? '' : 'text-slate-500'}`}>{displayLabel}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          {values.length > 0 && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); clearAll(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); clearAll(); } }}
+              className="text-slate-500 hover:text-slate-300 text-xs px-1"
+              aria-label="Clear all tools"
+            >✕</span>
+          )}
+          <svg className={`w-3 h-3 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 10 6" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 1l4 4 4-4"/></svg>
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 mt-1 w-full bg-slate-900 border border-slate-700 rounded-md shadow-xl flex flex-col">
+          <div className="p-2 border-b border-slate-800 shrink-0 flex items-center gap-1.5">
+            <input
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search tools..."
+              className="flex-1 h-8 rounded bg-slate-950 border border-slate-800 px-2 text-xs text-slate-200 outline-none focus:border-blue-500"
+            />
+            <button
+              type="button"
+              onClick={selectAllFiltered}
+              disabled={filteredTools.length === 0}
+              className="shrink-0 h-8 px-2 rounded text-[10px] font-bold uppercase text-blue-300 hover:bg-blue-500/10 border border-slate-800 hover:border-blue-500/30 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+            >
+              Select all
+            </button>
+          </div>
+
+          <div className="max-h-52 overflow-y-auto">
+            {filteredTools.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-slate-500 italic">No tools found.</p>
+            ) : (
+              filteredTools.map((tool) => {
+                const nonDev = isNonDevelopmentTool(tool);
+                const isSelected = values.includes(tool);
+                return (
+                  <label
+                    key={tool}
+                    className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-800 transition-colors ${isSelected ? 'bg-blue-900/20' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleTool(tool)}
+                      className="accent-blue-500 shrink-0"
+                    />
+                    <span className={`flex-1 truncate text-sm ${isSelected ? 'text-blue-300' : 'text-slate-200'}`}>{tool}</span>
+                    {nonDev && (
+                      <span className="text-[9px] uppercase text-blue-400/70 shrink-0 whitespace-nowrap">Non-dev</span>
+                    )}
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          {values.length > 0 && (
+            <div className="p-2 border-t border-slate-800 shrink-0 flex items-center justify-between">
+              <span className="text-[10px] text-slate-500">{values.length} selected</span>
+              <button
+                type="button"
+                onClick={clearAll}
+                className="text-[10px] font-bold uppercase text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {values.length > 1 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {values.map((tool) => (
+            <span key={tool} className="inline-flex items-center gap-1 text-[10px] bg-blue-500/15 border border-blue-500/30 text-blue-300 rounded px-1.5 py-0.5">
+              <span className="truncate max-w-[140px]">{tool}</span>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleTool(tool)}
+                onKeyDown={(e) => { if (e.key === 'Enter') toggleTool(tool); }}
+                className="hover:text-white cursor-pointer"
+                aria-label={`Remove ${tool}`}
+              >✕</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {hasNonDevSelection && (
+        <p className="mt-1 text-[10px] text-blue-300/70">
+          Meetings, calls, discussions, reviews, and training skip automatic tool-usage validation.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function SubtaskSelect({ taskId, values = [], onChange }: { taskId: string; values: string[]; onChange: (subtaskIds: string[], subtaskNames: string[]) => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useState<HTMLDivElement | null>(null);

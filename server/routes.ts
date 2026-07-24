@@ -2697,6 +2697,11 @@ export async function registerRoutes(
 
       // Save selected tasks
       for (const t of selectedTasks) {
+        // Tool the employee expects to use for this planned task, selected via
+        // the Plan for the Day's "Tool Selection" field. Falls back to
+        // scheduleData.tool in case the client only nested it there.
+        const tTool: string | null = t.tool || t.scheduleData?.tool || null;
+
         await storage.createPlanTask({
           planId: plan.id,
           taskId: t.id,
@@ -2706,6 +2711,7 @@ export async function registerRoutes(
           status: 'approved',
           source: t.source || 'Manual',
           isLocked: !!t.isLocked,
+          tool: tTool,
           scheduleData: t.scheduleData || {
             startTime: t.startTime,
             endTime: t.endTime,
@@ -2759,6 +2765,7 @@ export async function registerRoutes(
               startTime: tStart,
               endTime: tEnd,
               totalHours,
+              toolsUsed: tTool ? [tTool] : [],
               pmsId: t.id && !t.id.startsWith('planned-') && !t.id.startsWith('break-') ? t.id : null,
               pmsSubtaskId: tSubtaskId,
               status: 'draft'
