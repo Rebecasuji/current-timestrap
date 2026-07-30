@@ -190,6 +190,7 @@ export const timeEntries = pgTable("time_entries", {
   achievements: text("achievements"),
   scopeOfImprovements: text("scope_of_improvements"),
   toolsUsed: text("tools_used").array(),
+  actualWorkTool: text("actual_work_tool"),
   startTime: text("start_time").notNull(),
   endTime: text("end_time").notNull(),
   totalHours: text("total_hours").notNull(),

@@ -33,7 +33,7 @@ export default function UsersPage({ user }: UsersPageProps) {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [createdUser, setCreatedUser] = useState<any>(null);
-  
+
   const [formData, setFormData] = useState({
     name: '',
     employeeCode: '',
@@ -126,7 +126,40 @@ export default function UsersPage({ user }: UsersPageProps) {
     toolValidationMutation.mutate({ id: emp.id, enforce: nextValue });
   };
 
-  const filteredUsers = employees.filter(u => 
+  // Global TimeGuard Suggestions toggle
+  const { data: timeguardSuggestionsSetting, isLoading: loadingTimeguardSetting } = useQuery<{ timeguardSuggestionsEnabled: boolean }>({
+    queryKey: ['/api/settings/timeguard-suggestions'],
+  });
+  const timeguardSuggestionsEnabled = timeguardSuggestionsSetting?.timeguardSuggestionsEnabled !== false;
+
+  const timeguardSuggestionsMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const response = await apiRequest('PATCH', '/api/settings/timeguard-suggestions', { enabled });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/settings/timeguard-suggestions'] });
+      toast({
+        title: data.timeguardSuggestionsEnabled ? 'TimeGuard Suggestions Enabled' : 'TimeGuard Suggestions Disabled',
+        description: data.timeguardSuggestionsEnabled
+          ? 'TimeGuard suggestions are now visible to all users.'
+          : 'TimeGuard suggestions are now hidden for all users.',
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Failed to update setting',
+        description: error.message || 'Could not update the TimeGuard Suggestions setting.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const handleToggleTimeguardSuggestions = () => {
+    timeguardSuggestionsMutation.mutate(!timeguardSuggestionsEnabled);
+  };
+
+  const filteredUsers = employees.filter(u =>
     u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.employeeCode.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -140,7 +173,7 @@ export default function UsersPage({ user }: UsersPageProps) {
       });
       return;
     }
-    
+
     createMutation.mutate(formData);
   };
 
@@ -228,6 +261,23 @@ export default function UsersPage({ user }: UsersPageProps) {
         </Card>
       </div>
 
+      <Card className="bg-slate-800/50 border-blue-500/20 p-4" data-testid="card-timeguard-suggestions-setting">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-white">TimeGuard Suggestions</p>
+            <p className="text-xs text-blue-200/60">
+              When enabled, all users can use "✨ Suggest from TimeGuard" to auto-fill task descriptions from tracked activity. When disabled, this is hidden for everyone.
+            </p>
+          </div>
+          <Switch
+            checked={timeguardSuggestionsEnabled}
+            disabled={loadingTimeguardSetting || timeguardSuggestionsMutation.isPending}
+            onCheckedChange={handleToggleTimeguardSuggestions}
+            data-testid="switch-timeguard-suggestions"
+          />
+        </div>
+      </Card>
+
       <Card className="bg-slate-800/50 border-blue-500/20">
         <CardHeader className="pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -271,8 +321,8 @@ export default function UsersPage({ user }: UsersPageProps) {
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.map(u => (
-                    <TableRow 
-                      key={u.id} 
+                    <TableRow
+                      key={u.id}
                       className="border-blue-500/10 hover:bg-slate-700/30"
                       data-testid={`row-user-${u.id}`}
                     >
@@ -307,9 +357,9 @@ export default function UsersPage({ user }: UsersPageProps) {
                           <Button size="icon" variant="ghost" className="text-blue-400 h-8 w-8">
                             <Edit2 className="w-4 h-4" />
                           </Button>
-                          <Button 
-                            size="icon" 
-                            variant="ghost" 
+                          <Button
+                            size="icon"
+                            variant="ghost"
                             className="text-red-400 h-8 w-8"
                             data-testid={`button-delete-user-${u.id}`}
                           >
@@ -338,7 +388,7 @@ export default function UsersPage({ user }: UsersPageProps) {
               Add a new employee to the system
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
             <div className="space-y-2">
               <Label className="text-blue-100">Employee Name *</Label>
@@ -350,7 +400,7 @@ export default function UsersPage({ user }: UsersPageProps) {
                 data-testid="input-new-user-name"
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label className="text-blue-100">Employee Code *</Label>
               <Input
@@ -361,7 +411,7 @@ export default function UsersPage({ user }: UsersPageProps) {
                 data-testid="input-new-user-code"
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label className="text-blue-100">Email</Label>
               <Input
@@ -373,7 +423,7 @@ export default function UsersPage({ user }: UsersPageProps) {
                 data-testid="input-new-user-email"
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label className="text-blue-100">Password *</Label>
               <Input
@@ -385,11 +435,11 @@ export default function UsersPage({ user }: UsersPageProps) {
                 data-testid="input-new-user-password"
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label className="text-blue-100">Role *</Label>
-              <Select 
-                value={formData.role} 
+              <Select
+                value={formData.role}
                 onValueChange={(v) => setFormData({ ...formData, role: v })}
               >
                 <SelectTrigger className="bg-slate-800 border-blue-500/20 text-white" data-testid="select-new-user-role">
@@ -403,11 +453,11 @@ export default function UsersPage({ user }: UsersPageProps) {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="space-y-2">
               <Label className="text-blue-100">Department</Label>
-              <Select 
-                value={formData.department} 
+              <Select
+                value={formData.department}
                 onValueChange={(v) => setFormData({ ...formData, department: v })}
               >
                 <SelectTrigger className="bg-slate-800 border-blue-500/20 text-white" data-testid="select-new-user-department">
@@ -425,7 +475,7 @@ export default function UsersPage({ user }: UsersPageProps) {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="space-y-2">
               <Label className="text-blue-100">Group Name</Label>
               <Input
@@ -436,11 +486,11 @@ export default function UsersPage({ user }: UsersPageProps) {
                 data-testid="input-new-user-group"
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label className="text-blue-100">Line Manager</Label>
-              <Select 
-                value={formData.lineManagerId} 
+              <Select
+                value={formData.lineManagerId}
                 onValueChange={(v) => setFormData({ ...formData, lineManagerId: v })}
               >
                 <SelectTrigger className="bg-slate-800 border-blue-500/20 text-white" data-testid="select-new-user-manager">
@@ -456,13 +506,13 @@ export default function UsersPage({ user }: UsersPageProps) {
               </Select>
             </div>
           </div>
-          
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)} className="border-slate-600">
               Cancel
             </Button>
-            <Button 
-              onClick={handleCreateUser} 
+            <Button
+              onClick={handleCreateUser}
               className="bg-blue-600"
               disabled={createMutation.isPending}
               data-testid="button-save-new-user"
@@ -500,8 +550,8 @@ export default function UsersPage({ user }: UsersPageProps) {
             )}
           </div>
           <DialogFooter>
-            <Button 
-              onClick={() => setShowSuccessDialog(false)} 
+            <Button
+              onClick={() => setShowSuccessDialog(false)}
               className="w-full bg-green-600"
             >
               Done

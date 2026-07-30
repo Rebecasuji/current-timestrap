@@ -17,13 +17,13 @@ if (!timeguardDatabaseUrl) {
 
 export const timeguardPool = timeguardDatabaseUrl
   ? new Pool({
-      connectionString: timeguardDatabaseUrl,
-      connectionTimeoutMillis: 5000,
-      idleTimeoutMillis: 30000,
-      ssl: {
-        rejectUnauthorized: false,
-      },
-    })
+    connectionString: timeguardDatabaseUrl,
+    connectionTimeoutMillis: 5000,
+    idleTimeoutMillis: 30000,
+    ssl: {
+      rejectUnauthorized: false,
+    },
+  })
   : null;
 
 if (timeguardDatabaseUrl) {
@@ -331,4 +331,109 @@ export async function getActivityLogEntries(
   return Array.from(seen.values())
     .filter((e) => e.durationSeconds > 0)
     .sort((a, b) => b.durationSeconds - a.durationSeconds);
+}
+
+export interface ActualWorkedToolEntry {
+  /** "app" or "website" — mirrors activity_logs.activity_type */
+  activityType: string;
+  /** Application/Tool name (e.g. VS Code, Excel, Figma). For website rows this is the browser (Chrome, Edge, Firefox…), since that's what activity_logs.app_name records for a browser tab. */
+  appName: string;
+  /** Browser name — same as appName, only populated for activityType === 'website'. */
+  browserName: string | null;
+  /** Website URL/domain visited — only populated for activityType === 'website'. */
+  websiteUrl: string | null;
+  /** Window/page title. */
+  windowTitle: string;
+  /** Activity start time, clipped to the Timestrap session window (ISO string). */
+  startTime: string;
+  /** Activity end time, clipped to the Timestrap session window (ISO string). */
+  endTime: string;
+  /** Duration in seconds, clipped to the Timestrap session window. */
+  durationSeconds: number;
+}
+
+/**
+ * "Actual Worked Tools" — a read-only, un-collapsed, chronological pull of
+ * every TimeGuard activity_logs row (app + website activity, i.e. the
+ * activity/tool log) whose window overlaps the Timestrap entry's
+ * [startTime, endTime) session, for the given employee/date.
+ *
+ * Unlike getActivityLogEntries() (which dedupes/collapses and caps rows for
+ * a cheap AI prompt), this returns every individual activity row — one line
+ * per app/website session actually recorded — since it's meant to be
+ * displayed verbatim as the employee's complete work history for that
+ * Timestrap session. No manual entry, no AI involved.
+ */
+export async function getActualWorkedTools(
+  employeeCode: string,
+  date: string,
+  startTime: string,
+  endTime: string,
+  maxRows = 500
+): Promise<ActualWorkedToolEntry[]> {
+  if (!timeguardPool || !employeeCode || !date || !startTime || !endTime) {
+    return [];
+  }
+
+  let entryStartUtc: string;
+  let entryEndUtc: string;
+  try {
+    entryStartUtc = istDateTimeToUtcIso(date, startTime);
+    entryEndUtc = istDateTimeToUtcIso(date, endTime);
+  } catch {
+    return [];
+  }
+
+  const employeeResult = await timeguardPool.query(
+    `SELECT id FROM employees WHERE employee_code = $1 LIMIT 1`,
+    [employeeCode]
+  );
+  const employeeId = employeeResult.rows[0]?.id;
+  if (!employeeId) {
+    return [];
+  }
+
+  const result = await timeguardPool.query(
+    `SELECT activity_type,
+            COALESCE(app_name, '') AS app_name,
+            COALESCE(title, '') AS title,
+            COALESCE(window_title, '') AS window_title,
+            COALESCE(website, '') AS website,
+            COALESCE(url, '') AS url,
+            GREATEST(start_time, $2::timestamptz) AS clipped_start,
+            LEAST(
+              COALESCE(end_time, start_time + make_interval(secs => COALESCE(duration_seconds, 0))),
+              $3::timestamptz
+            ) AS clipped_end
+     FROM activity_logs
+     WHERE employee_id = $1
+       AND activity_type IN ('app', 'website')
+       AND start_time < $3::timestamptz
+       AND COALESCE(end_time, start_time + make_interval(secs => COALESCE(duration_seconds, 0))) > $2::timestamptz
+     ORDER BY start_time ASC
+     LIMIT $4`,
+    [employeeId, entryStartUtc, entryEndUtc, maxRows]
+  );
+
+  const entries: ActualWorkedToolEntry[] = [];
+  for (const row of result.rows as any[]) {
+    const start = new Date(row.clipped_start);
+    const end = new Date(row.clipped_end);
+    const durationSeconds = Math.round(Math.max(0, (end.getTime() - start.getTime()) / 1000));
+    if (durationSeconds <= 0) continue;
+
+    const isWebsite = row.activity_type === "website";
+    entries.push({
+      activityType: row.activity_type,
+      appName: row.app_name,
+      browserName: isWebsite ? row.app_name || null : null,
+      websiteUrl: isWebsite ? (row.url || row.website || null) : null,
+      windowTitle: row.window_title || row.title || "",
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      durationSeconds,
+    });
+  }
+
+  return entries;
 }

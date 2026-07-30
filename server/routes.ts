@@ -6,7 +6,7 @@ import { promises as fs } from "fs";
 import fsSync from "fs";
 import path from "path";   // ✅ KEEP THIS
 import { pool } from "./db";
-import { validateToolUsage, getToolActivitySummary } from "./toolUsageValidation";
+import { validateToolUsage, getToolActivitySummary, getActualWorkedTools } from "./toolUsageValidation";
 import { suggestWorkSummaryFromTimeGuard } from "./aiActivitySummary";
 import { pmsPool, saveSiteReportToPMS, getTasks, type PMSTask } from "./pmsSupabase";
 import {
@@ -546,6 +546,24 @@ export async function registerRoutes(
     }
   });
 
+  // ============ ACTUAL WORKED TOOLS (read-only, auto-fetched) ============
+  // Returns every TimeGuard activity/tool log row (app + website activity)
+  // whose window overlaps the given Timestrap session's [startTime, endTime).
+  // Pure read/display — no manual entry, nothing derived or invented.
+  app.get("/api/timeguard/actual-worked-tools", async (req, res) => {
+    try {
+      const { employeeCode, date, startTime, endTime } = req.query as Record<string, string>;
+      if (!employeeCode || !date || !startTime || !endTime) {
+        return res.status(400).json({ error: "employeeCode, date, startTime, and endTime are required" });
+      }
+      const entries = await getActualWorkedTools(employeeCode, date, startTime, endTime);
+      res.json({ entries });
+    } catch (error) {
+      console.error("Get actual worked tools error:", error);
+      res.status(500).json({ error: "Failed to fetch actual worked tools" });
+    }
+  });
+
   // ============ TIMEGUARD ACTIVITY SUMMARY (for Description/Achievements autofill) ============
   // Returns tool usage minutes TimeGuard actually logged for the given
   // employee/date/time-window — factual data only, never invents content.
@@ -570,6 +588,10 @@ export async function registerRoutes(
   // reviews/edits — never auto-saved as final.
   app.get("/api/timeguard/suggest-work-summary", async (req, res) => {
     try {
+      const settings = await readSettings();
+      if (settings.timeguardSuggestionsEnabled === false) {
+        return res.status(403).json({ error: "TimeGuard suggestions are currently disabled", disabled: true });
+      }
       const { employeeCode, date, startTime, endTime, project, taskTitle, subTask } = req.query as Record<string, string>;
       if (!employeeCode || !date || !startTime || !endTime) {
         return res.status(400).json({ error: "employeeCode, date, startTime, and endTime are required" });
@@ -3361,6 +3383,40 @@ export async function registerRoutes(
     } catch (error) {
       console.error('Get settings error:', error);
       res.status(500).json({ error: 'Failed to get settings' });
+    }
+  });
+
+  // ============ TIMEGUARD SUGGESTIONS GLOBAL TOGGLE ============
+  // Global switch controlling whether the "Suggest from TimeGuard" feature
+  // is visible/usable for all users. Defaults to enabled unless explicitly
+  // disabled by an admin/HR user in User Management.
+  app.get('/api/settings/timeguard-suggestions', async (req, res) => {
+    try {
+      const settings = await readSettings();
+      res.json({ timeguardSuggestionsEnabled: settings.timeguardSuggestionsEnabled !== false });
+    } catch (error) {
+      console.error('Get TimeGuard suggestions setting error:', error);
+      res.status(500).json({ error: 'Failed to get TimeGuard suggestions setting' });
+    }
+  });
+
+  app.patch('/api/settings/timeguard-suggestions', async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      if (typeof enabled !== 'boolean') {
+        return res.status(400).json({ error: 'enabled must be a boolean' });
+      }
+      const settings = await readSettings();
+      settings.timeguardSuggestionsEnabled = enabled;
+      const success = await writeSettings(settings);
+      if (!success) {
+        return res.status(500).json({ error: 'Failed to write settings' });
+      }
+      broadcast('timeguard_suggestions_setting_changed', { timeguardSuggestionsEnabled: enabled });
+      res.json({ timeguardSuggestionsEnabled: enabled });
+    } catch (error) {
+      console.error('Update TimeGuard suggestions setting error:', error);
+      res.status(500).json({ error: 'Failed to update TimeGuard suggestions setting' });
     }
   });
 
