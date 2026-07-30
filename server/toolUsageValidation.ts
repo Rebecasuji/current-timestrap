@@ -336,11 +336,17 @@ export async function getActivityLogEntries(
 export interface ActualWorkedToolEntry {
   /** "app" or "website" — mirrors activity_logs.activity_type */
   activityType: string;
-  /** Application/Tool name (e.g. VS Code, Excel, Figma). For website rows this is the browser (Chrome, Edge, Firefox…), since that's what activity_logs.app_name records for a browser tab. */
+  /** Application/Tool name (e.g. VS Code, Excel, Figma). For browser rows this is the browser (Chrome, Edge, Firefox…), since that's what activity_logs.app_name records for a browser tab. */
   appName: string;
-  /** Browser name — same as appName, only populated for activityType === 'website'. */
+  /**
+   * Browser name. Populated whenever the row is recognizably a browser —
+   * either activity_type === 'website', or activity_type === 'app' but
+   * app_name matches a known browser (TimeGuard sometimes can't resolve a
+   * specific site — e.g. a new-tab page or a chrome:// URL — and logs the
+   * window as a plain 'app' row even though it's still browser activity).
+   */
   browserName: string | null;
-  /** Website URL/domain visited — only populated for activityType === 'website'. */
+  /** Website URL/domain visited, whenever TimeGuard captured one — regardless of activity_type. */
   websiteUrl: string | null;
   /** Window/page title. */
   windowTitle: string;
@@ -350,6 +356,28 @@ export interface ActualWorkedToolEntry {
   endTime: string;
   /** Duration in seconds, clipped to the Timestrap session window. */
   durationSeconds: number;
+}
+
+/** Known browser app names, matched case-insensitively as a substring of app_name. */
+const KNOWN_BROWSER_APP_NAMES = [
+  "chrome",
+  "google chrome",
+  "microsoft edge",
+  "msedge",
+  "edge",
+  "firefox",
+  "mozilla firefox",
+  "brave",
+  "opera",
+  "safari",
+  "vivaldi",
+  "chromium",
+];
+
+function isBrowserAppName(appName: string | null | undefined): boolean {
+  if (!appName) return false;
+  const normalized = appName.trim().toLowerCase();
+  return KNOWN_BROWSER_APP_NAMES.some((name) => normalized.includes(name));
 }
 
 /**
@@ -423,11 +451,18 @@ export async function getActualWorkedTools(
     if (durationSeconds <= 0) continue;
 
     const isWebsite = row.activity_type === "website";
+    // The query already selects website/url for every row — don't discard
+    // that data just because a browser tab happened to be logged as a plain
+    // 'app' row. Likewise, recognize known browser app names even without a
+    // captured URL, so "Chrome" still shows up under Browser rather than
+    // silently falling into a generic app bucket.
+    const capturedUrl = row.url || row.website || null;
+    const isRecognizedBrowser = isWebsite || isBrowserAppName(row.app_name);
     entries.push({
       activityType: row.activity_type,
       appName: row.app_name,
-      browserName: isWebsite ? row.app_name || null : null,
-      websiteUrl: isWebsite ? (row.url || row.website || null) : null,
+      browserName: isRecognizedBrowser ? (row.app_name || null) : null,
+      websiteUrl: capturedUrl,
       windowTitle: row.window_title || row.title || "",
       startTime: start.toISOString(),
       endTime: end.toISOString(),

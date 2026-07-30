@@ -598,9 +598,14 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     }>();
 
     for (const entry of actualWorkedTools) {
-      const isWebsite = entry.activityType === 'website';
-      const domain = isWebsite ? extractDomain(entry.websiteUrl) : null;
-      const key = isWebsite
+      // Trust the API's browserName/websiteUrl directly rather than only
+      // activityType === 'website' — the backend now also flags known
+      // browser apps (e.g. Chrome logged as a plain 'app' row when it
+      // couldn't resolve a specific site) so Browser still shows up even
+      // without a captured URL.
+      const domain = entry.websiteUrl ? extractDomain(entry.websiteUrl) : null;
+      const isBrowserRow = !!(entry.browserName || domain);
+      const key = isBrowserRow
         ? `web::${(entry.browserName || entry.appName || '').toLowerCase()}::${(domain || '').toLowerCase()}`
         : `app::${(entry.appName || '').toLowerCase()}`;
 
@@ -613,9 +618,9 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
         if (new Date(entry.endTime) > new Date(existing.latestEnd)) existing.latestEnd = entry.endTime;
       } else {
         groups.set(key, {
-          appName: isWebsite ? '' : entry.appName,
-          browserName: isWebsite ? (entry.browserName || entry.appName) : null,
-          websiteUrl: isWebsite ? (domain || entry.websiteUrl) : null,
+          appName: isBrowserRow ? '' : entry.appName,
+          browserName: isBrowserRow ? (entry.browserName || entry.appName) : null,
+          websiteUrl: domain || entry.websiteUrl,
           titles: new Set(entry.windowTitle ? [entry.windowTitle] : []),
           totalDurationSeconds: entry.durationSeconds,
           earliestStart: entry.startTime,
@@ -654,10 +659,9 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     );
 
     const labelFor = (entry: ActualWorkedToolEntry) => {
-      if (entry.activityType === 'website') {
-        const domain = extractDomain(entry.websiteUrl);
-        return domain || entry.browserName || entry.appName || 'Website';
-      }
+      const domain = entry.websiteUrl ? extractDomain(entry.websiteUrl) : null;
+      if (domain) return domain;
+      if (entry.browserName) return entry.browserName;
       return entry.appName || 'App';
     };
 
@@ -1647,7 +1651,7 @@ function ActivityTimelinePanel({
                 <TableBody>
                   {aggregated.map((group, idx) => (
                     <TableRow key={idx} className="border-blue-500/10">
-                      <TableCell className="text-blue-100 text-xs">{group.websiteUrl ? '-' : group.appName}</TableCell>
+                      <TableCell className="text-blue-100 text-xs">{group.browserName ? '-' : group.appName}</TableCell>
                       <TableCell className="text-blue-100 text-xs">{group.browserName || '-'}</TableCell>
                       <TableCell className="text-blue-100 text-xs max-w-[200px] truncate" title={group.websiteUrl || ''}>{group.websiteUrl || '-'}</TableCell>
                       <TableCell className="text-blue-100 text-xs whitespace-nowrap">{group.sessionCount}</TableCell>

@@ -19,6 +19,7 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import type { TimeEntry, SiteReport } from '@shared/schema';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format, parseISO, startOfDay, endOfDay, isWithinInterval, startOfMonth, endOfMonth, addMonths, subMonths } from 'date-fns';
+import ActivityTimelinePanel from '@/components/ActivityTimelinePanel';
 
 interface ExtendedTimeEntry extends TimeEntry {
   lmsData?: {
@@ -700,48 +701,72 @@ export default function ApprovalPage({ user }: { user: User }) {
                       </div>
                     </div>
 
-                    {/* Expanded Section: Achievements, Problems, and Tools */}
+                    {/* Expanded Section: Task Details tab + Activity Timeline tab */}
                     {isExpanded && (
-                      <div className="mt-4 pt-4 border-t border-blue-500/10 space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <TaskDetailRow label="Quantify Result" value={entry.quantify} icon={Target} colorClass="border-orange-500/10 bg-orange-500/5" />
-                          <TaskDetailRow label="Achievements" value={entry.achievements} icon={Trophy} colorClass="border-green-500/10 bg-green-500/5" />
-                        </div>
+                      <div className="mt-4 pt-4 border-t border-blue-500/10">
+                        <Tabs defaultValue="details">
+                          <TabsList className="bg-slate-900 border border-blue-500/10 p-1 mb-4 h-10">
+                            <TabsTrigger value="details" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-xs gap-1.5">
+                              <FileText className="w-3.5 h-3.5" />
+                              Task Details
+                            </TabsTrigger>
+                            <TabsTrigger value="activity" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-xs gap-1.5">
+                              <Clock className="w-3.5 h-3.5" />
+                              Activity Timeline
+                            </TabsTrigger>
+                          </TabsList>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <TaskDetailRow label="Problems & Issues" value={entry.problemAndIssues} icon={AlertCircle} colorClass="border-red-500/10 bg-red-500/5" />
-                          <TaskDetailRow label="Scope of Improvements" value={entry.scopeOfImprovements} icon={TrendingUp} colorClass="border-yellow-500/10 bg-yellow-500/5" />
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="bg-cyan-500/5 p-3 rounded-lg border border-cyan-500/10">
-                            <span className="text-cyan-400 font-bold uppercase text-[9px] block mb-2 flex items-center gap-1">
-                              <Wrench className="w-3 h-3" /> Tools Used
-                            </span>
-                            <div className="flex flex-wrap gap-2 mt-1">
-                              {entry.toolsUsed && entry.toolsUsed.length > 0 ? (
-                                entry.toolsUsed.map(t => (
-                                  <Badge key={t} variant="outline" className="text-[10px] bg-blue-500/10 border-blue-500/30 text-blue-300 px-2.5 py-0.5">
-                                    {t}
-                                  </Badge>
-                                ))
-                              ) : (
-                                <span className="text-blue-200/20 text-[10px] italic">No tools recorded</span>
-                              )}
+                          <TabsContent value="details" className="space-y-4 mt-0">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <TaskDetailRow label="Quantify Result" value={entry.quantify} icon={Target} colorClass="border-orange-500/10 bg-orange-500/5" />
+                              <TaskDetailRow label="Achievements" value={entry.achievements} icon={Trophy} colorClass="border-green-500/10 bg-green-500/5" />
                             </div>
-                          </div>
-                          <TaskDetailRow label="Description" value={entry.taskDescription.split(' | ')[2] || parsed.description} icon={FileText} colorClass="border-blue-500/10 bg-blue-500/5" />
-                        </div>
 
-                        {entry.status === 'on_hold' && entry.onHoldReason && (
-                          <div className="bg-orange-500/5 p-3 rounded-lg border border-orange-500/20 flex items-start gap-3">
-                            <AlertCircle className="w-4 h-4 text-orange-400 mt-0.5" />
-                            <div>
-                              <span className="text-orange-400 font-bold uppercase text-[9px] block mb-1">On Hold Reason</span>
-                              <p className="text-blue-100/70 text-xs leading-relaxed">{entry.onHoldReason}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <TaskDetailRow label="Problems & Issues" value={entry.problemAndIssues} icon={AlertCircle} colorClass="border-red-500/10 bg-red-500/5" />
+                              <TaskDetailRow label="Scope of Improvements" value={entry.scopeOfImprovements} icon={TrendingUp} colorClass="border-yellow-500/10 bg-yellow-500/5" />
                             </div>
-                          </div>
-                        )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="bg-cyan-500/5 p-3 rounded-lg border border-cyan-500/10">
+                                <span className="text-cyan-400 font-bold uppercase text-[9px] block mb-2 flex items-center gap-1">
+                                  <Wrench className="w-3 h-3" /> Tools Used
+                                </span>
+                                <div className="flex flex-wrap gap-2 mt-1">
+                                  {entry.toolsUsed && entry.toolsUsed.length > 0 ? (
+                                    entry.toolsUsed.map(t => (
+                                      <Badge key={t} variant="outline" className="text-[10px] bg-blue-500/10 border-blue-500/30 text-blue-300 px-2.5 py-0.5">
+                                        {t}
+                                      </Badge>
+                                    ))
+                                  ) : (
+                                    <span className="text-blue-200/20 text-[10px] italic">No tools recorded</span>
+                                  )}
+                                </div>
+                              </div>
+                              <TaskDetailRow label="Description" value={entry.taskDescription.split(' | ')[2] || parsed.description} icon={FileText} colorClass="border-blue-500/10 bg-blue-500/5" />
+                            </div>
+
+                            {entry.status === 'on_hold' && entry.onHoldReason && (
+                              <div className="bg-orange-500/5 p-3 rounded-lg border border-orange-500/20 flex items-start gap-3">
+                                <AlertCircle className="w-4 h-4 text-orange-400 mt-0.5" />
+                                <div>
+                                  <span className="text-orange-400 font-bold uppercase text-[9px] block mb-1">On Hold Reason</span>
+                                  <p className="text-blue-100/70 text-xs leading-relaxed">{entry.onHoldReason}</p>
+                                </div>
+                              </div>
+                            )}
+                          </TabsContent>
+
+                          <TabsContent value="activity" className="mt-0">
+                            <ActivityTimelinePanel
+                              employeeCode={entry.employeeCode}
+                              date={entry.date?.toString()}
+                              startTime={entry.startTime}
+                              endTime={entry.endTime}
+                            />
+                          </TabsContent>
+                        </Tabs>
                       </div>
                     )}
 
@@ -844,8 +869,8 @@ export default function ApprovalPage({ user }: { user: User }) {
 
                     <div className="flex flex-col items-end gap-2">
                       <Badge className={`uppercase text-[9px] px-2 py-0.5 tracking-wider font-bold ${report.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
-                          report.status === 'approved' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                            'bg-red-500/20 text-red-400 border-red-500/30'
+                        report.status === 'approved' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                          'bg-red-500/20 text-red-400 border-red-500/30'
                         } border`}>
                         {report.status}
                       </Badge>
@@ -994,40 +1019,40 @@ export default function ApprovalPage({ user }: { user: User }) {
                               const end = formatPlanTime12h(schedule.endTime || task.endTime);
                               const subtaskName = schedule.subtaskName || task.subtaskName;
                               return (
-                              <div key={task.id} className={`flex items-center justify-between p-3 rounded-xl border ${task.isDeviation ? 'bg-amber-500/5 border-amber-500/20' : 'bg-slate-800/30 border-slate-700/40'}`}>
-                                <div>
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-sm font-bold text-white">{task.taskName}</span>
-                                    {task.isDeviation && <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[8px] h-4">Deviation</Badge>}
-                                    {(start && end) && (
-                                      <span className="text-[10px] font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full whitespace-nowrap">
-                                        {start} – {end}
-                                      </span>
+                                <div key={task.id} className={`flex items-center justify-between p-3 rounded-xl border ${task.isDeviation ? 'bg-amber-500/5 border-amber-500/20' : 'bg-slate-800/30 border-slate-700/40'}`}>
+                                  <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-sm font-bold text-white">{task.taskName}</span>
+                                      {task.isDeviation && <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[8px] h-4">Deviation</Badge>}
+                                      {(start && end) && (
+                                        <span className="text-[10px] font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                          {start} – {end}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">{task.projectName}</p>
+                                    {subtaskName && <p className="text-[11px] text-blue-300/70 mt-0.5">↳ {subtaskName}</p>}
+                                    {task.isDeviation && task.deviationReason && (
+                                      <p className="text-xs text-amber-200/60 italic mt-0.5">"{task.deviationReason}"</p>
                                     )}
                                   </div>
-                                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">{task.projectName}</p>
-                                  {subtaskName && <p className="text-[11px] text-blue-300/70 mt-0.5">↳ {subtaskName}</p>}
-                                  {task.isDeviation && task.deviationReason && (
-                                    <p className="text-xs text-amber-200/60 italic mt-0.5">"{task.deviationReason}"</p>
+                                  {task.isDeviation && task.status === 'pending' ? (
+                                    <div className="flex gap-1.5 shrink-0 ml-3">
+                                      <Button size="sm" variant="destructive" className="h-7 text-[10px] px-2"
+                                        onClick={() => updatePlanTaskMutation.mutate({ taskId: task.id, status: 'rejected' })}>
+                                        Reject
+                                      </Button>
+                                      <Button size="sm" className="h-7 text-[10px] px-2 bg-green-600 hover:bg-green-500"
+                                        onClick={() => updatePlanTaskMutation.mutate({ taskId: task.id, status: 'approved' })}>
+                                        Approve
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <Badge className={`uppercase text-[8px] shrink-0 ml-3 ${task.status === 'approved' ? 'bg-green-500/20 text-green-400' : task.status === 'rejected' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500'}`}>
+                                      {task.status}
+                                    </Badge>
                                   )}
                                 </div>
-                                {task.isDeviation && task.status === 'pending' ? (
-                                  <div className="flex gap-1.5 shrink-0 ml-3">
-                                    <Button size="sm" variant="destructive" className="h-7 text-[10px] px-2"
-                                      onClick={() => updatePlanTaskMutation.mutate({ taskId: task.id, status: 'rejected' })}>
-                                      Reject
-                                    </Button>
-                                    <Button size="sm" className="h-7 text-[10px] px-2 bg-green-600 hover:bg-green-500"
-                                      onClick={() => updatePlanTaskMutation.mutate({ taskId: task.id, status: 'approved' })}>
-                                      Approve
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <Badge className={`uppercase text-[8px] shrink-0 ml-3 ${task.status === 'approved' ? 'bg-green-500/20 text-green-400' : task.status === 'rejected' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-500'}`}>
-                                    {task.status}
-                                  </Badge>
-                                )}
-                              </div>
                               );
                             })}
                           </div>
@@ -1307,8 +1332,8 @@ export default function ApprovalPage({ user }: { user: User }) {
               <div className="flex items-center justify-between p-3 rounded-xl bg-slate-800/40 border border-white/5">
                 <span className="text-xs text-slate-400">Report Status</span>
                 <Badge className={`uppercase text-[10px] px-3 py-1 font-bold ${siteReportDetail.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
-                    siteReportDetail.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
-                      'bg-red-500/20 text-red-400 border-red-500/30'
+                  siteReportDetail.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
+                    'bg-red-500/20 text-red-400 border-red-500/30'
                   } border`}>
                   {siteReportDetail.status}
                 </Badge>
