@@ -468,4 +468,4 @@ export const chatSessions = pgTable("chat_sessions", {
   messages: jsonb("messages").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+})

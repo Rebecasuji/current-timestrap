@@ -1471,12 +1471,20 @@ export async function registerRoutes(
 
       const parseDurationToMinutes = (duration: string): number => {
         if (!duration) return 0;
-        const match = duration.match(/(\d+)h\s*(\d+)m?/);
-        if (match) {
-          return parseInt(match[1], 10) * 60 + parseInt(match[2] || '0', 10);
+        const hMatch = duration.match(/(\d+)h/);
+        const mMatch = duration.match(/(\d+)m/);
+        const colonMatch = duration.match(/(\d+):(\d+)/);
+
+        if (hMatch || mMatch) {
+          const h = hMatch ? parseInt(hMatch[1], 10) : 0;
+          const m = mMatch ? parseInt(mMatch[1], 10) : 0;
+          return h * 60 + m;
+        } else if (colonMatch) {
+          return parseInt(colonMatch[1], 10) * 60 + parseInt(colonMatch[2], 10);
         }
-        const hours = parseFloat(duration);
-        return isNaN(hours) ? 0 : Math.round(hours * 60);
+        const digits = parseFloat(duration);
+        if (!isNaN(digits)) return digits * 60;
+        return 0;
       };
 
       const formatDuration = (minutes: number): string => {
@@ -1998,12 +2006,20 @@ export async function registerRoutes(
 
       const parseDurationToMinutes = (duration: string): number => {
         if (!duration) return 0;
-        const match = duration.match(/(\d+)h\s*(\d+)m?/);
-        if (match) {
-          return parseInt(match[1], 10) * 60 + parseInt(match[2] || '0', 10);
+        const hMatch = duration.match(/(\d+)h/);
+        const mMatch = duration.match(/(\d+)m/);
+        const colonMatch = duration.match(/(\d+):(\d+)/);
+
+        if (hMatch || mMatch) {
+          const h = hMatch ? parseInt(hMatch[1], 10) : 0;
+          const m = mMatch ? parseInt(mMatch[1], 10) : 0;
+          return h * 60 + m;
+        } else if (colonMatch) {
+          return parseInt(colonMatch[1], 10) * 60 + parseInt(colonMatch[2], 10);
         }
-        const hours = parseFloat(duration);
-        return isNaN(hours) ? 0 : Math.round(hours * 60);
+        const digits = parseFloat(duration);
+        if (!isNaN(digits)) return digits * 60;
+        return 0;
       };
 
       const formatDuration = (minutes: number): string => {

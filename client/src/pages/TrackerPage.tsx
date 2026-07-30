@@ -63,7 +63,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const params = new URLSearchParams(window.location.search);
     const dateParam = params.get('date');
-    
+
     if (dateParam) {
       const parsedDate = new Date(dateParam);
       if (!isNaN(parsedDate.getTime())) {
@@ -872,12 +872,23 @@ export default function TrackerPage({ user }: TrackerPageProps) {
         ));
       }
 
-      // Step 2: Send daily summary email (works with both pending and server entries)
-      // This endpoint marks all today's draft entries as pending
+      // Step 2: Finalize the timesheet for the day (also sends the daily summary email).
+      // This endpoint marks all today's draft entries as pending — if it fails (e.g. the
+      // 8-hour minimum isn't met), the submission has NOT gone through, so we must not
+      // show a success state. Previously this was swallowed silently, which left entries
+      // stuck as 'draft' (hidden from Approvals, shown as "Incomplete" in EOD Reports)
+      // while the employee saw a false "Timesheet Submitted" confirmation.
       try {
         await apiRequest('POST', `/api/time-entries/submit-daily/${user.id}/${formattedDate}`);
-      } catch (emailError) {
-        console.log('Daily summary email notification skipped or failed', emailError);
+      } catch (finalizeError: any) {
+        const message = finalizeError?.message || 'Failed to finalize timesheet. Please try again.';
+        toast({
+          title: "Submission Failed",
+          description: message,
+          variant: "destructive",
+        });
+        setIsSubmitting(false);
+        return;
       }
 
       // Step 3: Show confirmation and celebrate
@@ -2059,4 +2070,3 @@ export default function TrackerPage({ user }: TrackerPageProps) {
     </div>
   );
 }
-

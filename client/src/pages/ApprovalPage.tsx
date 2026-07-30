@@ -1323,7 +1323,7 @@ export default function ApprovalPage({ user }: { user: User }) {
 
 // Sub-component to fetch and display LMS hours for a specific employee and date
 function LMSHoursDisplay({ employeeCode, date }: { employeeCode: string; date: string }) {
-  const { data: lmsHours } = useQuery<{ leaveHours: number; permissionHours: number; totalLMSHours: number }>({
+  const { data: lmsHours } = useQuery<{ leaveHours: number; permissionHours: number; odHours: number; totalLMSHours: number }>({
     queryKey: ['/api/lms/hours', employeeCode, date],
     queryFn: async () => {
       const response = await fetch(`/api/lms/hours?employeeCode=${employeeCode}&date=${date}`);
@@ -1354,6 +1354,13 @@ function LMSHoursDisplay({ employeeCode, date }: { employeeCode: string; date: s
         <Badge className="bg-gradient-to-r from-purple-600 to-pink-600 text-white border-none shadow-md shadow-purple-900/40 text-[10px] py-1 px-3 font-bold">
           <Zap className="w-3 h-3 mr-1.5" />
           Permission: {lmsHours.permissionHours}h
+        </Badge>
+      )}
+
+      {lmsHours.odHours > 0 && (
+        <Badge className="bg-gradient-to-r from-orange-600 to-amber-600 text-white border-none shadow-md shadow-orange-900/40 text-[10px] py-1 px-3 font-bold">
+          <CalendarIcon className="w-3 h-3 mr-1.5" />
+          OD: {lmsHours.odHours}h
         </Badge>
       )}
 
