@@ -81,7 +81,7 @@ export function shouldSkipToolValidation(toolNames: string[] | null | undefined)
  * (Plan for the Day) pickers. Includes both development tools and
  * non-development (meeting/call/discussion/review/training) activities. */
 export const TOOLS_LIST = [
-  'Adobe Scanner', 'Airtable', 'Android Studio', 'Angular', 'AWS', 'Azure',
+  'Adobe Scanner', 'Airtable', 'Android Studio', 'Angular', 'AutoCAD', 'AWS', 'Azure',
   'Antigravity', 'Amazon', 'Bitbucket', 'BrowserStack', 'Calls/Phone',
   'Canva', 'ChatGPT', 'Chrome', 'Claude', 'Client Call', 'Client Meeting', 'Code Review',
   'Copilot', 'Whatsapp', 'Confluence', 'CSS', 'Discussion', 'Docker',
