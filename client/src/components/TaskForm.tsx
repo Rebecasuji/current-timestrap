@@ -833,8 +833,6 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     setIsSubmitting(false);
     try {
       playSound('hurray');
-      window.dispatchEvent(new CustomEvent('mascot:doll', { detail: { text: "Wow, really great!", x: 50, y: 30 } }));
-      speak('Wow, really great!');
     } catch { }
     try {
       // Award points only when task marked complete (100%) — per-project

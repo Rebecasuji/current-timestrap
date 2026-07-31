@@ -19,7 +19,7 @@ import {
   getGoogleStatus as getPmsGoogleStatus,
   disconnectGoogle as disconnectPmsGoogle,
 } from "./Pmscalendarevents";
-import { getLMSHours } from "./lmsSupabase";
+import { getLMSHours, getODExemption, isWithinApprovedOD, getEffectivePlanCutoffMinutes } from "./lmsSupabase";
 import { registerVoiceRoutes } from "./voice";
 import { format, parseISO, eachDayOfInterval, isSameDay } from "date-fns";
 import { sendEmail } from "./email";
@@ -74,7 +74,7 @@ function isProjectExpired(endDate: string | null): boolean {
   }
 }
 
-function isAfterPlanCutoff(): boolean {
+function isAfterPlanCutoff(cutoffMinutesOverride?: number): boolean {
   const now = new Date();
   // Normalize to UTC first, then add IST offset (5.5h)
   const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -83,9 +83,15 @@ function isAfterPlanCutoff(): boolean {
   // Use UTC methods to get the "local" components of the shifted date
   const hours = istNow.getUTCHours();
   const minutes = istNow.getUTCMinutes();
+  const nowMinutes = hours * 60 + minutes;
 
-  // Return true if current time in IST is past 12:30 PM
-  return (hours > 12) || (hours === 12 && minutes >= 30);
+  // Standard cutoff is 12:30 PM (750 minutes from midnight). Callers can pass
+  // an OD-adjusted cutoff (see getEffectivePlanCutoffMinutes in lmsSupabase.ts)
+  // so an employee on approved On-Duty isn't marked "past cutoff" while their
+  // OD window overlaps the standard 12:30 PM deadline.
+  const cutoffMinutes = cutoffMinutesOverride ?? (12 * 60 + 30);
+
+  return nowMinutes >= cutoffMinutes;
 }
 
 // Batch enrich entries to avoid N+1 query problem
@@ -2582,7 +2588,8 @@ export async function registerRoutes(
   });
 
   // ---- Plan Window Control (E0046 only) ----
-  app.get("/api/plan-window", async (_req, res) => {
+  app.get("/api/plan-window", async (req, res) => {
+    const { employeeId } = req.query;
     const settings = await readSettings();
     const now = new Date();
     const utcNow = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -2590,12 +2597,44 @@ export async function registerRoutes(
     const today = format(istNow, "yyyy-MM-dd");
 
     const isAutomatedClosed = await storage.isDailyPlanClosed(today);
-    const isPastCutoff = isAfterPlanCutoff();
+
+    // OD (On-Duty) exemption: if this employee has an approved OD for today,
+    // work out whether they're exempt right now and/or whether the standard
+    // 12:30 PM cutoff needs to be pushed out to the end of their OD window.
+    let odExempt = false;
+    let odWindow: { from: string; to: string } | null = null;
+    let odIsFullDay = false;
+    let effectiveCutoffMinutes = 12 * 60 + 30;
+
+    if (employeeId) {
+      try {
+        const employee = await storage.getEmployee(employeeId as string);
+        if (employee) {
+          const exemption = await getODExemption(employee.employeeCode, today);
+          if (exemption.hasApprovedOD) {
+            odIsFullDay = exemption.isFullDay;
+            odExempt = isWithinApprovedOD(exemption, now);
+            effectiveCutoffMinutes = getEffectivePlanCutoffMinutes(exemption, effectiveCutoffMinutes);
+            if (exemption.windows.length > 0) {
+              odWindow = { from: exemption.windows[0].from, to: exemption.windows[0].to };
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[PLAN WINDOW] Failed to check OD exemption:", err);
+      }
+    }
+
+    const isPastCutoff = isAfterPlanCutoff(effectiveCutoffMinutes);
 
     // Manual override logic: If admin explicitly toggled today, use that state.
-    // Otherwise, use the default automated logic (open until cutoff).
+    // Otherwise, use the default automated logic (open until cutoff), with the
+    // OD exemption always keeping the window open while the employee is
+    // currently within their approved OD time (or all day, for a Full Day OD).
     const isOverrideToday = settings.planWindowLastModifiedDate === today;
-    const planWindowOpen = isOverrideToday ? !!settings.planWindowOpen : (!isAutomatedClosed && !isPastCutoff);
+    const planWindowOpen = isOverrideToday
+      ? !!settings.planWindowOpen
+      : ((!isAutomatedClosed && !isPastCutoff) || odExempt || odIsFullDay);
 
     res.json({
       planWindowOpen,
@@ -2603,7 +2642,10 @@ export async function registerRoutes(
       isPastCutoff,
       isOverrideToday,
       cutoffTime: "12:30 PM",
-      serverTime: new Date().toISOString()
+      serverTime: new Date().toISOString(),
+      odExempt: odExempt || odIsFullDay,
+      odIsFullDay,
+      odWindow
     });
   });
 
@@ -2664,14 +2706,36 @@ export async function registerRoutes(
 
       // Check if plan window is open (manual override has priority)
       const settings = await readSettings();
-      const isPastCutoff = isAfterPlanCutoff();
 
       const istNow = new Date(new Date().getTime() + (new Date().getTimezoneOffset() * 60000) + (5.5 * 60 * 60 * 1000));
       const today = format(istNow, "yyyy-MM-dd");
       const isAutomatedClosed = await storage.isDailyPlanClosed(today);
 
+      // OD (On-Duty) exemption: an approved OD pushes the cutoff to the end
+      // of the OD window (or exempts the whole day, for a Full Day OD), so
+      // the employee isn't blocked from submitting/exempted incorrectly
+      // while genuinely on approved OD.
+      let odExempt = false;
+      let effectiveCutoffMinutes = 12 * 60 + 30;
+      try {
+        const employeeForOD = await storage.getEmployee(employeeId);
+        if (employeeForOD) {
+          const exemption = await getODExemption(employeeForOD.employeeCode, today);
+          if (exemption.hasApprovedOD) {
+            odExempt = exemption.isFullDay || isWithinApprovedOD(exemption, new Date());
+            effectiveCutoffMinutes = getEffectivePlanCutoffMinutes(exemption, effectiveCutoffMinutes);
+          }
+        }
+      } catch (odErr) {
+        console.error("[DAILY PLANS] Failed to check OD exemption:", odErr);
+      }
+
+      const isPastCutoff = isAfterPlanCutoff(effectiveCutoffMinutes);
+
       const isOverrideToday = settings.planWindowLastModifiedDate === today;
-      const planWindowOpen = isOverrideToday ? !!settings.planWindowOpen : (!isAutomatedClosed && !isPastCutoff);
+      const planWindowOpen = isOverrideToday
+        ? !!settings.planWindowOpen
+        : ((!isAutomatedClosed && !isPastCutoff) || odExempt);
 
       if (!planWindowOpen) {
         const reason = isPastCutoff ? "12:30 PM cutoff" : "administrative closure";
@@ -3063,7 +3127,18 @@ export async function registerRoutes(
         const entries = await storage.getTimeEntriesByEmployeeAndDate(emp.id, today);
         const missedItems: string[] = [];
 
-        if (!plan) missedItems.push('daily_plan');
+        // OD (On-Duty) exemption: an employee on an approved Full Day OD, or
+        // currently within their approved OD window, should not be flagged
+        // as having missed their Plan of the Day.
+        let odExemptToday = false;
+        try {
+          const exemption = await getODExemption(emp.employeeCode, today);
+          odExemptToday = exemption.hasApprovedOD && (exemption.isFullDay || isWithinApprovedOD(exemption, now));
+        } catch (odErr) {
+          console.error(`[END OF DAY CHECK] OD lookup failed for ${emp.employeeCode}:`, odErr);
+        }
+
+        if (!plan && !odExemptToday) missedItems.push('daily_plan');
         if (entries.length === 0) missedItems.push('timesheet');
 
         if (missedItems.length > 0) {
@@ -3076,7 +3151,7 @@ export async function registerRoutes(
           });
         }
 
-        if (!plan) {
+        if (!plan && !odExemptToday) {
           missedDailyPlan.push({
             employeeName: emp.name,
             employeeCode: emp.employeeCode,
@@ -3614,12 +3689,16 @@ export async function registerRoutes(
           const lmsData = batchLMS[emp.employeeCode]?.[dStr] || {
             leaveHours: 0,
             permissionHours: 0,
+            odHours: 0,
             totalLMSHours: 0,
-            details: { leaves: [], permissions: [] }
+            details: { leaves: [], permissions: [] },
+            odWindows: []
           };
 
           const hasLeave = lmsData.leaveHours >= 4;
           const isFullLeave = lmsData.leaveHours >= 8;
+          const hasOD = (lmsData.odHours || 0) > 0;
+          const isFullOD = (lmsData.odHours || 0) >= 8;
 
           // Check if final submitted
           const isFinalSubmitted = dailySubs.some(s => s.employeeId === emp.id);
@@ -3649,10 +3728,17 @@ export async function registerRoutes(
             status = "Submitted";
           } else if (isFullLeave) {
             status = "On Leave";
+          } else if (isFullOD) {
+            // Full Day approved OD — treated like On Leave, not a missed submission.
+            status = "On OD";
           } else if (empEntries.length > 0) {
             status = "Incomplete";
           } else if (hasLeave) {
             status = "On Leave";
+          } else if (hasOD) {
+            // Partial-day OD (Half Day / Hourly) — not yet submitted, but the
+            // OD duration itself is a valid exemption rather than "missing".
+            status = "On OD";
           } else if (isSunday) {
             status = "Sunday";
           }

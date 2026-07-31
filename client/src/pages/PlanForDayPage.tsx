@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest, queryClient } from '@/lib/queryClient';
-import { CheckCircle2, Circle, ArrowRight, ArrowLeft, Send, AlertTriangle, Clock, Calendar as CalendarIcon, ClipboardList, Target, Power, PowerOff, Lock, ArrowUp, ArrowDown, Search as PlannedTaskSearchIcon, ChevronUp, ChevronDown, Minus } from 'lucide-react';
+import { CheckCircle2, Circle, ArrowRight, ArrowLeft, Send, AlertTriangle, Clock, Calendar as CalendarIcon, ClipboardList, Target, Power, PowerOff, Lock, ArrowUp, ArrowDown, Search as PlannedTaskSearchIcon, ChevronUp, ChevronDown, Minus, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, addDays } from 'date-fns';
 import { Input } from '@/components/ui/input';
@@ -295,9 +295,10 @@ export default function PlanForDayPage() {
   };
 
   const { data: windowData } = useQuery({
-    queryKey: ['/api/plan-window'],
+    queryKey: ['/api/plan-window', user?.id],
+    enabled: !!user?.id,
     queryFn: async () => {
-      const res = await fetch('/api/plan-window');
+      const res = await fetch(`/api/plan-window?employeeId=${user?.id}`);
       return res.json();
     },
     refetchInterval: 30000,
@@ -354,6 +355,9 @@ export default function PlanForDayPage() {
   const isWindowOpen = !!windowData?.planWindowOpen;
   const isPastCutoff = !!windowData?.isPastCutoff;
   const isOverrideToday = !!windowData?.isOverrideToday;
+  const isOnApprovedOD = !!windowData?.odExempt;
+  const odIsFullDay = !!windowData?.odIsFullDay;
+  const odWindow = windowData?.odWindow as { from: string; to: string } | null | undefined;
   const isAlreadySubmittedAndBlocked = planStatus?.submitted;
   const isWindowClosedNotSubmitted = !isWindowOpen && !planStatus?.submitted;
 
@@ -472,7 +476,7 @@ export default function PlanForDayPage() {
       return res.json();
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(['/api/plan-window'], data);
+      queryClient.setQueryData(['/api/plan-window', user?.id], data);
       toast({
         title: data.planWindowOpen ? '🟢 Plan Window Opened' : '🔴 Plan Window Closed',
         description: data.planWindowOpen ? 'Employees can submit plans.' : 'Submission restricted.',
@@ -550,7 +554,27 @@ export default function PlanForDayPage() {
     return sum + (task.scheduleData?.durationMinutes || task.durationMinutes || 30);
   }, 0);
   const timingErrors = getTimingErrors(selectedTasks);
-  const isValidPlan = totalWorkingMinutes >= 540 && timingErrors.length === 0;
+
+  // Standard workday used for the 9-hour requirement: 9:00 AM - 6:00 PM (540 min).
+  const STANDARD_DAY_MINUTES = 540;
+  const STANDARD_DAY_START_MIN = 9 * 60;
+  const STANDARD_DAY_END_MIN = 18 * 60;
+
+  // When the employee has an approved OD, the portion of the standard workday
+  // covered by the OD is exempted from the required planning hours. A full-day
+  // OD exempts the whole 9 hours; a partial OD reduces the requirement by the
+  // amount of overlap between the OD window and the standard workday.
+  const odOverlapMinutes = (() => {
+    if (!isOnApprovedOD) return 0;
+    if (odIsFullDay) return STANDARD_DAY_MINUTES;
+    if (!odWindow?.from || !odWindow?.to) return 0;
+    const odStart = Math.max(STANDARD_DAY_START_MIN, toMinutes(odWindow.from));
+    const odEnd = Math.min(STANDARD_DAY_END_MIN, toMinutes(odWindow.to));
+    return Math.max(0, odEnd - odStart);
+  })();
+
+  const requiredMinutes = Math.max(0, STANDARD_DAY_MINUTES - odOverlapMinutes);
+  const isValidPlan = totalWorkingMinutes >= requiredMinutes && timingErrors.length === 0;
 
   if (isLoadingPlan || isLoadingTasks) {
     return (
@@ -686,18 +710,45 @@ export default function PlanForDayPage() {
     });
   };
 
+  // Grace period added on top of an OD's end time before the plan window cuts
+  // off, so an employee returning from OD isn't caught out immediately.
+  const OD_CUTOFF_GRACE_MINUTES = 60;
+
   const getMinutesUntilCutoff = () => {
     const serverNow = new Date(currentTime.getTime() + serverTimeOffset);
     const utcTime = serverNow.getTime() + (serverNow.getTimezoneOffset() * 60000);
     const istNow = new Date(utcTime + (5.5 * 60 * 60 * 1000));
     const istCutoff = new Date(istNow);
-    istCutoff.setUTCHours(12, 30, 0, 0);
+
+    // Base cutoff is 12:30 PM. If the employee is on an approved OD that ends
+    // after the base cutoff, push the effective cutoff to OD-end + grace so
+    // they get a fair window to submit once they're back.
+    let cutoffHour = 12;
+    let cutoffMinute = 30;
+    if (isOnApprovedOD && !odIsFullDay && odWindow?.to) {
+      const odEndMin = toMinutes(odWindow.to) + OD_CUTOFF_GRACE_MINUTES;
+      const baseCutoffMin = 12 * 60 + 30;
+      if (odEndMin > baseCutoffMin) {
+        cutoffHour = Math.floor(odEndMin / 60);
+        cutoffMinute = odEndMin % 60;
+      }
+    }
+    istCutoff.setUTCHours(cutoffHour, cutoffMinute, 0, 0);
     const diff = istCutoff.getTime() - istNow.getTime();
     return Math.floor(diff / 60000);
   };
 
   const minutesUntilCutoff = getMinutesUntilCutoff();
   const isNearCutoff = minutesUntilCutoff > 0 && minutesUntilCutoff <= 30;
+
+  const formatODTime = (t?: string | null) => {
+    if (!t) return '';
+    const [hStr, mStr] = t.split(':');
+    let h = parseInt(hStr, 10);
+    const period = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${mStr} ${period}`;
+  };
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-4 md:p-8 page-bg-fix">
@@ -758,7 +809,23 @@ export default function PlanForDayPage() {
         </div>
       ) : !showUnselectedForm ? (
         <div className="space-y-6">
-          {isNearCutoff && (
+          {isOnApprovedOD && (
+            <div className="bg-violet-500/10 border border-violet-500/30 rounded-2xl p-4 flex items-center gap-4 text-violet-300">
+              <ShieldCheck className="w-6 h-6" />
+              <div>
+                <p className="font-black text-sm uppercase">On Approved On-Duty (OD)</p>
+                <p className="text-xs opacity-80">
+                  {odIsFullDay
+                    ? "You're on OD for the whole day — the Plan for the Day isn't required today."
+                    : odWindow
+                      ? `You're on OD from ${formatODTime(odWindow.from)} to ${formatODTime(odWindow.to)} — that time is exempt from planning. Your required hours for today are reduced to ${Math.floor(requiredMinutes / 60)}h ${requiredMinutes % 60}m instead of the usual 9h.`
+                      : "You're on approved OD right now — the Plan for the Day is optional during this time."}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {isNearCutoff && !isOnApprovedOD && (
             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex items-center gap-4 text-amber-400">
               <Clock className="w-6 h-6 animate-pulse" />
               <div>
@@ -1049,7 +1116,10 @@ export default function PlanForDayPage() {
                   )}
                   <div className="flex items-center gap-2 text-xs text-amber-500 mb-3">
                     <AlertTriangle className="w-4 h-4" />
-                    <span>TASKS MUST BE COMPLETED TODAY. (Total: {Math.floor(totalWorkingMinutes / 60)}h {totalWorkingMinutes % 60}m)</span>
+                    <span>
+                      TASKS MUST BE COMPLETED TODAY. (Total: {Math.floor(totalWorkingMinutes / 60)}h {totalWorkingMinutes % 60}m
+                      {odOverlapMinutes > 0 ? ` · Required reduced to ${Math.floor(requiredMinutes / 60)}h ${requiredMinutes % 60}m for OD` : ''})
+                    </span>
                   </div>
                   <Button
                     className={`w-full h-12 text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-900/20 ${isValidPlan ? 'bg-blue-600 hover:bg-blue-500 hover:scale-[1.02] text-white' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
@@ -1060,7 +1130,7 @@ export default function PlanForDayPage() {
                       ? "LOCK IN MY PLAN"
                       : timingErrors.length > 0
                         ? "FIX TIMING ERRORS TO CONTINUE"
-                        : `NEED 9 HOURS TOTAL (CURRENT: ${Math.floor(totalWorkingMinutes / 60)}h ${totalWorkingMinutes % 60}m)`}
+                        : `NEED ${(requiredMinutes / 60).toFixed(requiredMinutes % 60 === 0 ? 0 : 1)} HOURS TOTAL (CURRENT: ${Math.floor(totalWorkingMinutes / 60)}h ${totalWorkingMinutes % 60}m)`}
                     {isValidPlan && <ArrowRight className="w-4 h-4 ml-2" />}
                   </Button>
                 </div>
@@ -1286,7 +1356,7 @@ function ToolSelect({ values = [], onChange }: { values: string[]; onChange: (to
               aria-label="Clear all tools"
             >✕</span>
           )}
-          <svg className={`w-3 h-3 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 10 6" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 1l4 4 4-4"/></svg>
+          <svg className={`w-3 h-3 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 10 6" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 1l4 4 4-4" /></svg>
         </div>
       </button>
 
@@ -1484,7 +1554,7 @@ function SubtaskSelect({ taskId, values = [], onChange }: { taskId: string; valu
                 aria-label="Clear all"
               >✕</span>
             )}
-            <svg className={`w-3 h-3 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 10 6" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 1l4 4 4-4"/></svg>
+            <svg className={`w-3 h-3 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 10 6" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 1l4 4 4-4" /></svg>
           </div>
         </button>
 

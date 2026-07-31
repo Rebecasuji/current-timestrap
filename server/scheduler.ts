@@ -1,4 +1,3 @@
-
 import cron from "node-cron";
 import { storage } from "./storage";
 import { getTasks } from "./pmsSupabase";
@@ -59,24 +58,26 @@ export async function generateAndSendEODReport(dateStr: string, reportType: stri
 
       const lmsData = await getLMSHours(emp.employeeCode, dateStr);
       const isFullLeave = lmsData.leaveHours >= 8;
+      const isFullOD = (lmsData.odHours || 0) >= 8; // Full Day approved OD
       const isFinalSubmitted = dailySubs.some(s => s.employeeId === emp.id);
       const empEntries = dateEntries.filter(e => e.employeeId === emp.id);
-      
+
       let status = "Missing";
       if (isFinalSubmitted) status = "Submitted";
       else if (isFullLeave) status = "On Leave";
+      else if (isFullOD) status = "On OD"; // treated as a valid exemption, not missing
       else if (empEntries.length > 0) status = "Incomplete";
 
       if (status === "Missing" || status === "Incomplete") {
         missingEmployees.push(emp);
-        
+
         // Only trigger in-app alerts at Noon
         if (reportType.includes("Noon")) {
           await storage.createAlert({
             employeeId: emp.id,
             type: status === "Missing" ? "missing_submission" : "late_submission",
-            message: status === "Missing" 
-              ? `You missed your timesheet submission for ${dateStr}.` 
+            message: status === "Missing"
+              ? `You missed your timesheet submission for ${dateStr}.`
               : `Your timesheet for ${dateStr} is incomplete and portal is now closed.`,
             date: dateStr
           });
@@ -104,11 +105,11 @@ export async function generateAndSendEODReport(dateStr: string, reportType: stri
           </td>
           <td style="padding: 16px; border-bottom: 1px solid #f1f5f9; color: #475569; font-size: 13px;">${r.dept}</td>
           <td style="padding: 16px; border-bottom: 1px solid #f1f5f9;">
-            <span style="font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; text-transform: uppercase; ${
-              r.status === 'Submitted' ? 'background: #dcfce7; color: #166534;' : 
-              r.status === 'On Leave' ? 'background: #dbeafe; color: #1e40af;' : 
+            <span style="font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; text-transform: uppercase; ${r.status === 'Submitted' ? 'background: #dcfce7; color: #166534;' :
+          r.status === 'On Leave' ? 'background: #dbeafe; color: #1e40af;' :
+            r.status === 'On OD' ? 'background: #ede9fe; color: #6d28d9;' :
               'background: #fee2e2; color: #991b1b;'
-            }">${r.status}</span>
+        }">${r.status}</span>
           </td>
           <td style="padding: 16px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 700; color: #0f172a;">${r.hours}h</td>
         </tr>
@@ -121,7 +122,8 @@ export async function generateAndSendEODReport(dateStr: string, reportType: stri
           total: reportData.length,
           submitted: reportData.filter(r => r.status === 'Submitted').length,
           missing: missingEmployees.length,
-          onLeave: reportData.filter(r => r.status === 'On Leave').length
+          onLeave: reportData.filter(r => r.status === 'On Leave').length,
+          onOD: reportData.filter(r => r.status === 'On OD').length
         },
         reportRows
       });

@@ -141,15 +141,30 @@ export default function ActivityTimelinePanel({
             (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
         );
 
+        const cleanLabel = (raw: string) => {
+            let text = raw;
+            try {
+                text = decodeURIComponent(text);
+            } catch {
+                // leave as-is if it isn't valid percent-encoding
+            }
+            return text.replace(/[_-]+/g, ' ').trim();
+        };
+
         const labelFor = (entry: ActualWorkedToolEntry) => {
             const domain = entry.websiteUrl ? extractDomain(entry.websiteUrl) : null;
-            if (domain) return domain;
-            if (entry.browserName) return entry.browserName;
-            return entry.appName || 'App';
+            if (domain) return cleanLabel(domain);
+            if (entry.browserName) return cleanLabel(entry.browserName);
+            return cleanLabel(entry.appName || 'App');
         };
 
         const blocks: TimelineBlock[] = [];
         let current: TimelineBlock | null = null;
+
+        const addTool = (block: TimelineBlock, label: string) => {
+            const exists = block.tools.some((t) => t.toLowerCase() === label.toLowerCase());
+            if (!exists) block.tools.push(label);
+        };
 
         for (const entry of sorted) {
             const isIdleEntry = entry.activityType === 'idle';
@@ -169,8 +184,7 @@ export default function ActivityTimelinePanel({
             if (current && current.type === 'activity' && gapSeconds < IDLE_GAP_SECONDS) {
                 current.endTime = end;
                 current.durationSeconds += entry.durationSeconds;
-                const label = labelFor(entry);
-                if (!current.tools.includes(label)) current.tools.push(label);
+                addTool(current, labelFor(entry));
                 continue;
             }
 
@@ -201,6 +215,17 @@ export default function ActivityTimelinePanel({
     }, [entries]);
 
     const [showTotals, setShowTotals] = useState(true);
+    const [expandedBlocks, setExpandedBlocks] = useState<Set<number>>(new Set());
+    const TOOLS_PREVIEW_COUNT = 8;
+
+    const toggleBlockExpanded = (idx: number) => {
+        setExpandedBlocks((prev) => {
+            const next = new Set(prev);
+            if (next.has(idx)) next.delete(idx);
+            else next.add(idx);
+            return next;
+        });
+    };
 
     const formatTime = (iso: string) =>
         new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -240,18 +265,38 @@ export default function ActivityTimelinePanel({
                                     }`}
                                 data-testid={`timeline-block-${idx}`}
                             >
-                                <div className="text-xs font-mono text-blue-300 whitespace-nowrap pt-0.5 min-w-[140px]">
+                                <div className="text-xs font-mono text-blue-300 whitespace-nowrap pt-1 min-w-[140px]">
                                     {formatTime(block.startTime)} – {formatTime(block.endTime)}
                                 </div>
-                                <ArrowRight className="w-3.5 h-3.5 text-blue-400/50 shrink-0 mt-0.5" />
+                                <ArrowRight className="w-3.5 h-3.5 text-blue-400/50 shrink-0 mt-1.5" />
                                 {block.type === 'idle' ? (
-                                    <div className="text-xs text-slate-400 italic">
+                                    <div className="text-xs text-slate-400 italic pt-1">
                                         {formatDuration(block.durationSeconds)} idle
                                     </div>
                                 ) : (
-                                    <div className="text-xs text-blue-100">
-                                        <span className="text-blue-200 font-medium">{block.tools.join(', ')}</span>
-                                        <span className="text-blue-400/60 ml-2">({formatDuration(block.durationSeconds)})</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            {(expandedBlocks.has(idx) ? block.tools : block.tools.slice(0, TOOLS_PREVIEW_COUNT)).map((tool, tIdx) => (
+                                                <span
+                                                    key={tIdx}
+                                                    className="inline-flex items-center rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] leading-4 text-blue-100 whitespace-nowrap"
+                                                >
+                                                    {tool}
+                                                </span>
+                                            ))}
+                                            {block.tools.length > TOOLS_PREVIEW_COUNT && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleBlockExpanded(idx)}
+                                                    className="inline-flex items-center rounded-full border border-blue-400/30 px-2 py-0.5 text-[11px] leading-4 text-blue-300 hover:text-blue-100 hover:bg-blue-500/10 transition-colors"
+                                                >
+                                                    {expandedBlocks.has(idx)
+                                                        ? 'Show less'
+                                                        : `+${block.tools.length - TOOLS_PREVIEW_COUNT} more`}
+                                                </button>
+                                            )}
+                                            <span className="text-blue-400/60 text-[11px] ml-1">({formatDuration(block.durationSeconds)})</span>
+                                        </div>
                                     </div>
                                 )}
                             </div>

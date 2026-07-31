@@ -19,7 +19,6 @@ import { useToast } from '@/hooks/use-toast';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { format, addDays, isAfter, startOfDay } from 'date-fns';
 import * as XLSX from 'xlsx';
-import { confettiBurst, playSound } from '@/lib/feedback';
 import gamification from '@/lib/gamification';
 import PointsDisplay from '@/components/PointsDisplay';
 import DailyPointsSummaryDialog from '@/components/DailyPointsSummaryDialog';
@@ -725,8 +724,6 @@ export default function TrackerPage({ user }: TrackerPageProps) {
     updatePendingTasks(pendingTasks.map(t =>
       t.id === taskId ? { ...t, isComplete: true, percentageComplete: 100 } : t
     ));
-    // Trigger celebratory doll
-    window.dispatchEvent(new CustomEvent('mascot:doll', { detail: { text: "Task Complete! Hurray!", x: 50, y: 30 } }));
   };
 
 
@@ -894,13 +891,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
       // Step 3: Show confirmation and celebrate
       setSubmittedTasks([...todaysTasksOnly]);
       setShowSubmissionConfirm(true);
-      try {
-        confettiBurst();
-        playSound('submit');
-        // Trigger celebratory dolls
-        window.dispatchEvent(new CustomEvent('mascot:doll', { detail: { text: "Timesheet Submitted!", x: 40, y: 30 } }));
-        setTimeout(() => window.dispatchEvent(new CustomEvent('mascot:doll', { detail: { text: "Great Job!", x: 60, y: 40 } })), 400);
-      } catch { }
+
 
       // NEW: Open the Daily Points Summary dialog so the employee can see
       // which tasks earned points and which were overdue (deductions).

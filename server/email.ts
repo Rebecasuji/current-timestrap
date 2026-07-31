@@ -86,12 +86,12 @@ function generateTaskTable(tasks: any[]) {
       </thead>
       <tbody>
         ${tasks.map(task => {
-          const progress = task.percentageComplete !== undefined ? `${task.percentageComplete}%` : '—';
-          const progressColor = task.percentageComplete === 100 ? '#16a34a' : (task.percentageComplete || 0) > 0 ? '#2563eb' : '#64748b';
-          const startDate = formatTimelineSafe(task.startTime || task.start_time);
-          const endDate = formatTimelineSafe(task.endTime || task.end_time);
-          
-          return `
+    const progress = task.percentageComplete !== undefined ? `${task.percentageComplete}%` : '—';
+    const progressColor = task.percentageComplete === 100 ? '#16a34a' : (task.percentageComplete || 0) > 0 ? '#2563eb' : '#64748b';
+    const startDate = formatTimelineSafe(task.startTime || task.start_time);
+    const endDate = formatTimelineSafe(task.endTime || task.end_time);
+
+    return `
           <tr style="border-bottom: 1px solid #e2e8f0;">
             <td style="padding: 10px; border: 1px solid #e2e8f0;">
               <div><strong>${task.projectName || '—'}</strong></div>
@@ -106,8 +106,8 @@ function generateTaskTable(tasks: any[]) {
             <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center;">
                <span style="padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; 
                 ${task.status === 'approved' ? 'background: #dcfce7; color: #166534;' :
-                  task.status === 'rejected' ? 'background: #fee2e2; color: #991b1b;' :
-                  'background: #dbeafe; color: #1e40af;'}">
+        task.status === 'rejected' ? 'background: #fee2e2; color: #991b1b;' :
+          'background: #dbeafe; color: #1e40af;'}">
                 ${(task.status || 'PENDING').toUpperCase()}
               </span>
             </td>
@@ -196,7 +196,7 @@ async function generateSiteReportPDF(data: {
       doc.fillColor(blue).fontSize(14).text('Daily Accomplishments', 50, currentY);
       currentY += 20;
       doc.fillColor(textDark).fontSize(10).text(data.workDone, 50, currentY, { width: 495, align: 'justify', lineGap: 2 });
-      
+
       currentY = doc.y + 30;
 
       // --- LABOR LOG ---
@@ -223,11 +223,11 @@ async function generateSiteReportPDF(data: {
         }
         currentY += 10;
       } else if (data.laborDetails) {
-         if (currentY > 700) { doc.addPage(); currentY = 50; }
-         doc.fillColor('#8b5cf6').fontSize(14).text('Labor Details', 50, currentY);
-         currentY += 20;
-         doc.fillColor(textDark).fontSize(10).text(data.laborDetails, 50, currentY, { width: 495 });
-         currentY = doc.y + 30;
+        if (currentY > 700) { doc.addPage(); currentY = 50; }
+        doc.fillColor('#8b5cf6').fontSize(14).text('Labor Details', 50, currentY);
+        currentY += 20;
+        doc.fillColor(textDark).fontSize(10).text(data.laborDetails, 50, currentY, { width: 495 });
+        currentY = doc.y + 30;
       }
 
       // --- MATERIALS ---
@@ -259,7 +259,7 @@ async function generateSiteReportPDF(data: {
         for (const img of images) {
           try {
             if (currentY > 550) { doc.addPage(); currentY = 50; }
-            
+
             let imgBuffer: Buffer;
             if (img.fileUrl.startsWith('data:')) {
               const base64Data = img.fileUrl.split(';base64,').pop()!;
@@ -446,12 +446,12 @@ export async function sendSiteReportEmail(data: {
   recipients: string[];
 }) {
   try {
-    const { 
-      employeeName, projectName, date, workCategory, 
-      startTime, endTime, duration, workDone, 
+    const {
+      employeeName, projectName, date, workCategory,
+      startTime, endTime, duration, workDone,
       issuesFaced, materialsUsed, laborCount, laborDetails,
       sqftCovered, laborData,
-      location, attachments, recipients 
+      location, attachments, recipients
     } = data;
 
     // Separate images from other files
@@ -594,7 +594,7 @@ export async function sendSiteReportEmail(data: {
     // Process image attachments to be sent as actual files
     const imageFiles = imageAttachments.map(a => ({
       filename: a.fileName,
-      content: a.fileUrl.startsWith('data:') 
+      content: a.fileUrl.startsWith('data:')
         ? Buffer.from(a.fileUrl.split(';base64,').pop()!, 'base64')
         : undefined,
       path: a.fileUrl.startsWith('http') ? a.fileUrl : undefined
@@ -684,8 +684,8 @@ export async function sendEmail(data: {
   if (validTo.length === 0) {
     const errorMsg = `[EMAIL ERROR] No valid recipient emails. Invalid: ${invalidTo.join(', ')}`;
     console.error(errorMsg);
-    return { 
-      success: false, 
+    return {
+      success: false,
       error: "No valid recipient emails provided",
       details: { invalidRecipients: invalidTo }
     };
@@ -717,26 +717,26 @@ export async function sendEmail(data: {
       if (error) {
         lastError = error;
         console.error(`[EMAIL ERROR] Attempt ${attempt}: ${error.message || error}`);
-        
+
         if (attempt <= maxRetries) {
           const waitTime = 1000 * Math.pow(2, attempt - 1); // exponential backoff
           console.log(`[EMAIL] Retrying in ${waitTime}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           continue;
         }
-        
-        return { 
-          success: false, 
+
+        return {
+          success: false,
           error: error.message || "Email send failed",
           details: { attempt, totalAttempts: maxRetries + 1, error }
         };
       }
 
       console.log(`[EMAIL SUCCESS] Email ID: ${result?.id} | Recipients: ${validTo.join(', ')} | Subject: "${subject}"`);
-      return { 
-        success: true, 
+      return {
+        success: true,
         result,
-        details: { 
+        details: {
           emailId: result?.id,
           recipientCount: validTo.length,
           ccCount: validCc.length,
@@ -746,7 +746,7 @@ export async function sendEmail(data: {
     } catch (err: any) {
       lastError = err;
       console.error(`[EMAIL ERROR] Attempt ${attempt}: ${err.message || err}`);
-      
+
       if (attempt <= maxRetries) {
         const waitTime = 1000 * Math.pow(2, attempt - 1);
         console.log(`[EMAIL] Retrying in ${waitTime}ms...`);
@@ -754,16 +754,16 @@ export async function sendEmail(data: {
         continue;
       }
 
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: err.message || "Email send failed",
         details: { attempt, totalAttempts: maxRetries + 1, error: err }
       };
     }
   }
 
-  return { 
-    success: false, 
+  return {
+    success: false,
     error: lastError?.message || "Email send failed after retries",
     details: { attempt, totalAttempts: maxRetries + 1, lastError }
   };
@@ -824,7 +824,7 @@ export async function sendDailyPlanSubmittedEmail(data: {
   const generateTaskRow = (t: any, isUnselected: boolean = false) => {
     const progress = t.progress !== undefined ? `${t.progress}%` : '0%';
     const progressColor = t.progress === 100 ? '#16a34a' : t.progress && t.progress > 0 ? '#2563eb' : '#64748b';
-    
+
     if (isUnselected) {
       // Deferred tasks: no Timeline column — timeslots are irrelevant for postponed tasks
       return `
@@ -838,7 +838,7 @@ export async function sendDailyPlanSubmittedEmail(data: {
 
     // Selected tasks: show the actual scheduled time from scheduleData (set by user in plan UI)
     const taskStart = formatTimelineSafe(t.startTime || t.scheduleData?.startTime || t.start_time);
-    const taskEnd   = formatTimelineSafe(t.endTime   || t.scheduleData?.endTime   || t.end_time);
+    const taskEnd = formatTimelineSafe(t.endTime || t.scheduleData?.endTime || t.end_time);
     return `
     <tr>
       <td style="padding:10px 8px;border-bottom:1px solid #e2e8f0;font-weight:500;">${t.task_name}</td>
@@ -862,9 +862,9 @@ export async function sendDailyPlanSubmittedEmail(data: {
           <thead>
             <tr style="background:#f8fafc; border-bottom: 2px solid #e2e8f0;">
               <th style="padding:12px 8px;text-align:left;color:#475569;font-weight:600;">Task</th>
-              ${isUnselected 
-                ? '<th style="padding:12px 8px;text-align:left;color:#475569;font-weight:600;">Reason</th>'
-                : '<th style="padding:12px 8px;text-align:left;color:#475569;font-weight:600;">Project</th>'}
+              ${isUnselected
+        ? '<th style="padding:12px 8px;text-align:left;color:#475569;font-weight:600;">Reason</th>'
+        : '<th style="padding:12px 8px;text-align:left;color:#475569;font-weight:600;">Project</th>'}
               <th style="padding:12px 8px;text-align:center;color:#475569;font-weight:600;">Progress</th>
               ${isUnselected ? '' : '<th style="padding:12px 8px;text-align:center;color:#475569;font-weight:600;">Timeline</th>'}
               ${isUnselected ? '<th style="padding:12px 8px;text-align:center;color:#475569;font-weight:600;">Next Target</th>' : ''}
@@ -907,14 +907,14 @@ export async function sendDailyPlanSubmittedEmail(data: {
 export async function sendDailyPlanReminderEmail(data: { recipients: string[], pendingTasks?: string[] }) {
   try {
     const { recipients = [], pendingTasks = [] } = data;
-    
+
     // Validate recipients
     const { valid: validRecipients, invalid: invalidRecipients } = validateEmailList(recipients);
-    
+
     if (validRecipients.length === 0) {
       console.error(`[REMINDER EMAIL] No valid recipients. Invalid: ${invalidRecipients.join(', ')}`);
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: "No valid recipient emails",
         details: { invalidRecipients }
       };
@@ -922,7 +922,7 @@ export async function sendDailyPlanReminderEmail(data: { recipients: string[], p
 
     const currentDate = format(new Date(), 'MMMM dd, yyyy');
     const subject = `Action Required: Submit Your Plan for the Day - ${currentDate}`;
-    
+
     // Safely construct task list HTML
     let taskListHtml = '';
     if (Array.isArray(pendingTasks) && pendingTasks.length > 0) {
@@ -930,7 +930,7 @@ export async function sendDailyPlanReminderEmail(data: { recipients: string[], p
         const validTasks = pendingTasks
           .filter((t: any) => t && typeof t === 'string')
           .slice(0, 10);
-        
+
         if (validTasks.length > 0) {
           taskListHtml = `
             <div style="margin: 24px 0; padding: 16px; background: linear-gradient(135deg, #fef3c7 0%, #fef08a 100%); border-left: 4px solid #f59e0b; border-radius: 8px;">
@@ -1036,7 +1036,7 @@ export async function sendDailyPlanReminderEmail(data: { recipients: string[], p
     }
 
     const result = await sendEmail({ to: validRecipients, subject, html, maxRetries: 2 });
-    
+
     if (result.success) {
       console.log(`[REMINDER EMAIL] ✓ Successfully sent to ${result.details?.recipientCount} recipients`);
     } else {
@@ -1065,25 +1065,25 @@ export async function sendPortalClosedNotificationEmail(data: {
   date: string;
 }) {
   const { recipients = [], missedSubmissionType, date } = data;
-  
+
   // Validate recipients
   const { valid: validRecipients, invalid: invalidRecipients } = validateEmailList(recipients);
-  
+
   if (validRecipients.length === 0) {
     console.error(`[PORTAL CLOSED EMAIL] No valid recipients. Invalid: ${invalidRecipients.join(', ')}`);
-    return { 
-      success: false, 
+    return {
+      success: false,
       error: "No valid recipient emails",
       details: { invalidRecipients }
     };
   }
 
   const subject = `Submission Deadline Passed - Action Required - ${date}`;
-  
-  const missingItemsText = 
+
+  const missingItemsText =
     missedSubmissionType === 'daily_plan' ? 'Plan for the Day'
-    : missedSubmissionType === 'timesheet' ? 'Timesheet'
-    : 'Plan for the Day and Timesheet';
+      : missedSubmissionType === 'timesheet' ? 'Timesheet'
+        : 'Plan for the Day and Timesheet';
 
   const html = `
     <!DOCTYPE html>
@@ -1182,7 +1182,7 @@ export async function sendPortalClosedNotificationEmail(data: {
   }
 
   const result = await sendEmail({ to: validRecipients, subject, html, maxRetries: 2 });
-  
+
   if (result.success) {
     console.log(`[PORTAL CLOSED EMAIL] ✓ Successfully sent to ${result.details?.recipientCount} recipients`);
   } else {
@@ -1192,28 +1192,28 @@ export async function sendPortalClosedNotificationEmail(data: {
   return result;
 }
 
-export async function sendEODSummaryReportEmail(data: { 
-  recipients: string[], 
-  date: string, 
-  summary: { total: number, submitted: number, missing: number, onLeave: number },
-  reportRows: string 
+export async function sendEODSummaryReportEmail(data: {
+  recipients: string[],
+  date: string,
+  summary: { total: number, submitted: number, missing: number, onLeave: number, onOD?: number },
+  reportRows: string
 }) {
   const { recipients = [], date, summary, reportRows } = data;
-  
+
   // Validate recipients
   const { valid: validRecipients, invalid: invalidRecipients } = validateEmailList(recipients);
-  
+
   if (validRecipients.length === 0) {
     console.error(`[EOD REPORT EMAIL] No valid recipients. Invalid: ${invalidRecipients.join(', ')}`);
-    return { 
-      success: false, 
+    return {
+      success: false,
       error: "No valid recipient emails for EOD report",
       details: { invalidRecipients }
     };
   }
-  
+
   const subject = `📊 EOD Summary Report - ${date}`;
-  
+
   const html = `
     <div style="font-family: sans-serif; max-width: 800px; margin: 0 auto; color: #1e293b; background-color: #f8fafc; padding: 40px; border-radius: 24px;">
       <div style="margin-bottom: 32px;">
@@ -1237,6 +1237,10 @@ export async function sendEODSummaryReportEmail(data: {
         <div style="flex: 1; background: white; padding: 16px; border-radius: 16px; border: 1px solid #e2e8f0; text-align: center;">
           <p style="margin: 0; font-size: 12px; color: #64748b; font-weight: 700; text-transform: uppercase;">On Leave</p>
           <p style="margin: 4px 0 0 0; font-size: 24px; font-weight: 800; color: #2563eb;">${summary.onLeave}</p>
+        </div>
+        <div style="flex: 1; background: white; padding: 16px; border-radius: 16px; border: 1px solid #e2e8f0; text-align: center;">
+          <p style="margin: 0; font-size: 12px; color: #64748b; font-weight: 700; text-transform: uppercase;">On OD</p>
+          <p style="margin: 4px 0 0 0; font-size: 24px; font-weight: 800; color: #6d28d9;">${summary.onOD ?? 0}</p>
         </div>
       </div>
       
@@ -1268,7 +1272,7 @@ export async function sendEODSummaryReportEmail(data: {
   }
 
   const result = await sendEmail({ to: validRecipients, subject, html, maxRetries: 2 });
-  
+
   if (result.success) {
     console.log(`[EOD REPORT EMAIL] ✓ Successfully sent to ${result.details?.recipientCount} recipients`);
   } else {
@@ -1426,7 +1430,7 @@ export async function sendDailyPlanConfirmationEmail(data: {
   const selectedRows = selectedTasks.map(t => {
     // Read actual scheduled times from scheduleData (set by user), fall back to bare startTime/endTime
     const tStart = formatTimelineSafe(t.startTime || t.scheduleData?.startTime || t.start_time);
-    const tEnd   = formatTimelineSafe(t.endTime   || t.scheduleData?.endTime   || t.end_time);
+    const tEnd = formatTimelineSafe(t.endTime || t.scheduleData?.endTime || t.end_time);
     return `
     <tr style="${t.isOverdue ? 'background:#fff7ed;' : ''}">
       <td style="padding:10px 10px;border-bottom:1px solid #e2e8f0;">

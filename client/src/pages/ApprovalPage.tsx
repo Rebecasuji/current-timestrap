@@ -1348,7 +1348,7 @@ export default function ApprovalPage({ user }: { user: User }) {
 
 // Sub-component to fetch and display LMS hours for a specific employee and date
 function LMSHoursDisplay({ employeeCode, date }: { employeeCode: string; date: string }) {
-  const { data: lmsHours } = useQuery<{ leaveHours: number; permissionHours: number; odHours: number; totalLMSHours: number }>({
+  const { data: lmsHours } = useQuery<{ leaveHours: number; permissionHours: number; odHours: number; totalLMSHours: number; odWindows?: { from: string; to: string; isFullDay: boolean; durationType: string }[] }>({
     queryKey: ['/api/lms/hours', employeeCode, date],
     queryFn: async () => {
       const response = await fetch(`/api/lms/hours?employeeCode=${employeeCode}&date=${date}`);
@@ -1360,6 +1360,16 @@ function LMSHoursDisplay({ employeeCode, date }: { employeeCode: string; date: s
   });
 
   if (!lmsHours || lmsHours.totalLMSHours === 0) return null;
+
+  const formatTime = (t?: string) => {
+    if (!t) return '';
+    const [hStr, mStr] = t.split(':');
+    let h = parseInt(hStr, 10);
+    const period = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${mStr} ${period}`;
+  };
+  const odWindow = lmsHours.odWindows?.[0];
 
   return (
     <div className="flex flex-wrap gap-2 mb-4 p-2 rounded-lg bg-blue-500/5 border border-blue-500/10 shadow-inner">
@@ -1386,6 +1396,8 @@ function LMSHoursDisplay({ employeeCode, date }: { employeeCode: string; date: s
         <Badge className="bg-gradient-to-r from-orange-600 to-amber-600 text-white border-none shadow-md shadow-orange-900/40 text-[10px] py-1 px-3 font-bold">
           <CalendarIcon className="w-3 h-3 mr-1.5" />
           OD: {lmsHours.odHours}h
+          {odWindow && !odWindow.isFullDay ? ` (${formatTime(odWindow.from)} – ${formatTime(odWindow.to)})` : ''}
+          {odWindow?.isFullDay ? ' (Full Day)' : ''}
         </Badge>
       )}
 
