@@ -1530,9 +1530,13 @@ export async function registerRoutes(
       const totalLMSMinutes = Math.round(lmsData.totalLMSHours * 60);
       const combinedMinutes = totalMinutes + totalLMSMinutes;
 
-      // 2. Working Hours Validation (Enforce 8 hours)
+      // Read force-allow setting so admins can bypass the 8-hour check
+      const currentSettings = await readSettings();
+      const forceAllowFinalSubmit = !!currentSettings.forceAllowFinalSubmit;
+
+      // 2. Working Hours Validation (Enforce 8 hours, unless force-submit is on)
       const REQUIRED_MINUTES = 8 * 60; // 8 hours
-      if (combinedMinutes < REQUIRED_MINUTES) {
+      if (!forceAllowFinalSubmit && combinedMinutes < REQUIRED_MINUTES) {
         return res.status(400).json({
           error: "Insufficient hours",
           message: `Total working hours (Timesheet + Leave/Permission) must be at least 8 hours. Current total: ${formatDuration(combinedMinutes)}`,
@@ -1599,10 +1603,9 @@ export async function registerRoutes(
       }
 
       if (!emailResult.success) {
-        return res.status(500).json({
-          error: "Failed to send daily summary email",
-          details: emailResult.error,
-        });
+        // Log but don't block — tasks are already transitioned to 'pending'.
+        // A failed email notification should not undo a successful submission.
+        console.error('[DAILY SUBMIT] Summary email failed (submission still succeeded):', emailResult.error);
       }
 
       console.log(`[DAILY SUBMIT] Daily summary and confirmation sent for ${employee.name} on ${date}`);
