@@ -431,7 +431,11 @@ export const getSubtasks = async (taskId?: string, userDepartment?: string, user
     }
 
     if (userEmpCode) {
-      query += ` AND (LOWER(s.assigned_to::text) = LOWER($${paramIdx}) OR LOWER(e.emp_code) = LOWER($${paramIdx}))`;
+      // Show subtasks that are explicitly assigned to this employee OR are unassigned
+      // (assigned_to IS NULL). Previously the strict match silently hid all subtasks
+      // whose assigned_to column was null, making the Sub Task dropdown appear empty
+      // even though the parent task had many subtasks.
+      query += ` AND (s.assigned_to IS NULL OR LOWER(s.assigned_to::text) = LOWER($${paramIdx}) OR LOWER(e.emp_code) = LOWER($${paramIdx}))`;
       params.push(userEmpCode);
       paramIdx++;
     }

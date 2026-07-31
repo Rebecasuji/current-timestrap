@@ -303,12 +303,13 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
         const json = await res.json();
 
         if (Array.isArray(json)) {
-          const selectedKeyStep = keySteps.find(k => k.name === formData.keyStep);
-          if (selectedKeyStep) {
-            setTasks(json.filter((t: any) => t.key_step_id === selectedKeyStep.id));
-          } else {
-            setTasks(json);
-          }
+          // Show ALL tasks for the selected project so the user can pick any
+          // task regardless of which key step is currently selected. The Key
+          // Step field auto-syncs to whichever task gets picked (see the
+          // effect below), so filtering tasks by key step here would trap
+          // the dropdown down to a single task whenever a key step is
+          // already set (e.g. when editing an existing entry).
+          setTasks(json);
         } else {
           setTasks([]);
         }
@@ -318,7 +319,7 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
       }
     }
     fetchTasks();
-  }, [formData.project, formData.keyStep, projects, keySteps]);
+  }, [formData.project, projects]);
 
   // Update pmsId and auto-select keyStep when task changes
   useEffect(() => {
@@ -393,15 +394,20 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
       }
 
       try {
-        // Find the task_id from the selected task name
+        // Find the task_id from the selected task name. Fall back to the
+        // pmsId already stored on this entry — the currently-loaded task
+        // list can be filtered by department/employee/role and may not
+        // contain this task by name (e.g. when editing an existing or
+        // postponed entry), even though we already know its real ID.
         const selectedTask = tasks.find(t => t.task_name === formData.title);
-        if (!selectedTask) {
+        const taskId = selectedTask?.id || formData.pmsId;
+        if (!taskId) {
           setSubtasks([]);
           return;
         }
 
         const params = new URLSearchParams();
-        params.append('taskId', selectedTask.id);
+        params.append('taskId', taskId);
         if (authUser?.department || user?.department) params.append('userDepartment', authUser?.department || user?.department || '');
         if (authUser?.employeeCode || user?.employeeCode) params.append('userEmpCode', authUser?.employeeCode || user?.employeeCode || '');
 
@@ -419,7 +425,18 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
       }
     }
     fetchSubtasks();
-  }, [formData.title, tasks]);
+  }, [formData.title, tasks, formData.pmsId]);
+
+  // Re-sync the displayed subtask once the list loads: if this entry already
+  // has a pmsSubtaskId (assigned by ID) but formData.subTask doesn't match
+  // any title in the freshly-fetched list, fill it in from the match.
+  useEffect(() => {
+    if (!formData.pmsSubtaskId || subtasks.length === 0) return;
+    const matched = subtasks.find(s => s.id === formData.pmsSubtaskId);
+    if (matched && matched.title !== formData.subTask) {
+      setFormData(prev => ({ ...prev, subTask: matched.title }));
+    }
+  }, [subtasks, formData.pmsSubtaskId]);
 
   // Automatically select Project, Key Step, Task, and Subtask based on Plan of the Day selection on load/edit
   const [hasAutoSelectedPlan, setHasAutoSelectedPlan] = useState(false);
@@ -469,8 +486,10 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
           const ksObj = mappedKeySteps.find((k: any) => k.id === targetTask.key_step_id);
           if (ksObj) matchedKeyStepName = ksObj.name;
         }
-        const filteredTasks = tasksData.filter((t: any) => t.key_step_id === targetTask.key_step_id);
-        setTasks(filteredTasks.length > 0 ? filteredTasks : tasksData);
+        // Keep the full task list for the project so the dropdown shows
+        // every available task, not just the ones sharing the planned
+        // task's key step.
+        setTasks(tasksData);
 
         // Fetch Subtasks
         const paramsS = new URLSearchParams();
