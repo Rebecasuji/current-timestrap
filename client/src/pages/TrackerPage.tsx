@@ -1591,100 +1591,129 @@ export default function TrackerPage({ user }: TrackerPageProps) {
 
                   const themeClass = ['theme-blue', 'theme-green', 'theme-purple', 'theme-cyan'][index % 4];
 
+                  // Subtasks belonging to this planned task, if any. Tasks without
+                  // subtasks simply get an empty array from the API and render
+                  // exactly as before, with nothing extra beneath them.
+                  const taskSubtasks: any[] = Array.isArray((task as any).subtasks) ? (task as any).subtasks : [];
+
                   return (
-                    <div
-                      key={index}
-                      className={`tracker-available-task-card group ${themeClass} ${computedTaskOverdue ? 'status-overdue' : 'status-normal'} p-4 rounded-xl flex items-center justify-between gap-4 transition-all duration-300 ${isAdded ? 'opacity-50 grayscale-[0.5]' : ''}`}
-                    >
-                      <div className="flex items-center gap-4 flex-1 min-w-0 relative z-10 tracker-card-left-content">
-                        <div className={`p-2 rounded-lg ${computedTaskOverdue ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'}`}>
-                          {computedTaskOverdue ? <AlertCircle className="w-5 h-5 flex-shrink-0" /> : <Clock className="w-5 h-5 flex-shrink-0" />}
-                        </div>
-
-                        <div className="flex-1 min-w-0 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-blue-500/10 text-blue-200/70 rounded border border-blue-500/10 whitespace-nowrap">
-                              {task.projectName}
-                            </span>
-                            {isAdded && (
-                              <span className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase bg-green-500/10 text-green-400 rounded border border-green-500/10">
-                                <CheckCircle className="w-3 h-3" />
-                                Added
-                              </span>
-                            )}
-                            {deadline && (
-                              <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${computedTaskOverdue
-                                ? 'bg-red-500/10 text-red-400 border-red-500/10'
-                                : 'bg-yellow-500/10 text-yellow-200/70 border-yellow-500/10'
-                                }`}>
-                                {computedTaskOverdue ? 'Was Due: ' : 'Due: '} {deadlineText}
-                              </span>
-                            )}
-                          </div>
-                          <h3 className={`text-sm font-semibold truncate ${computedTaskOverdue ? 'text-red-300' : 'text-white'}`}>
-                            {task.task_name}
-                          </h3>
-                        </div>
-                      </div>
-
-                      <Button
-                        onClick={() => !isAdded && handleQuickAddTask(task)}
-                        disabled={isAdded}
-                        size="sm"
-                        className={`${isAdded
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                          : computedTaskOverdue
-                            ? 'bg-red-600/20 text-red-100 hover:bg-red-600 border border-red-500/30'
-                            : 'bg-blue-600/20 text-blue-100 hover:bg-blue-600 border border-blue-500/30'
-                          } h-9 px-4 rounded-lg font-bold transition-all duration-300 whitespace-nowrap relative z-10 tracker-add-task-btn`}
+                    <div key={index} className="tracker-available-task-group">
+                      <div
+                        className={`tracker-available-task-card group ${themeClass} ${computedTaskOverdue ? 'status-overdue' : 'status-normal'} p-4 rounded-xl flex items-center justify-between gap-4 transition-all duration-300 ${isAdded ? 'opacity-50 grayscale-[0.5]' : ''}`}
                       >
-                        {isAdded ? 'Added' : <><Plus className="w-4 h-4 mr-2" /> Add Task</>}
-                      </Button>
+                        <div className="flex items-center gap-4 flex-1 min-w-0 relative z-10 tracker-card-left-content">
+                          <div className={`p-2 rounded-lg ${computedTaskOverdue ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                            {computedTaskOverdue ? <AlertCircle className="w-5 h-5 flex-shrink-0" /> : <Clock className="w-5 h-5 flex-shrink-0" />}
+                          </div>
 
-                      {/* Cloud Illustration Container */}
-                      <div className="tracker-card-cloud-wrapper" style={{
-                        position: 'absolute',
-                        right: 0,
-                        top: 0,
-                        bottom: 0,
-                        width: '280px',
-                        overflow: 'hidden',
-                        pointerEvents: 'none',
-                        zIndex: 1
-                      }}>
-                        {/* Scattered dots */}
-                        <svg width="280" height="100%" className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-                          <circle cx="40" cy="15" r="2" fill="var(--card-accent-color)" opacity="0.3" />
-                          <circle cx="90" cy="22" r="2" fill="var(--card-accent-color)" opacity="0.3" />
-                          <circle cx="130" cy="10" r="2" fill="var(--card-accent-color)" opacity="0.3" />
-                          <circle cx="170" cy="28" r="2" fill="var(--card-accent-color)" opacity="0.3" />
-                          <circle cx="210" cy="12" r="2" fill="var(--card-accent-color)" opacity="0.3" />
-                          <circle cx="230" cy="25" r="2" fill="var(--card-accent-color)" opacity="0.3" />
-                          <circle cx="70" cy="30" r="2" fill="var(--card-accent-color)" opacity="0.3" />
-                        </svg>
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-blue-500/10 text-blue-200/70 rounded border border-blue-500/10 whitespace-nowrap">
+                                {task.projectName}
+                              </span>
+                              {isAdded && (
+                                <span className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase bg-green-500/10 text-green-400 rounded border border-green-500/10">
+                                  <CheckCircle className="w-3 h-3" />
+                                  Added
+                                </span>
+                              )}
+                              {deadline && (
+                                <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${computedTaskOverdue
+                                  ? 'bg-red-500/10 text-red-400 border-red-500/10'
+                                  : 'bg-yellow-500/10 text-yellow-200/70 border-yellow-500/10'
+                                  }`}>
+                                  {computedTaskOverdue ? 'Was Due: ' : 'Due: '} {deadlineText}
+                                </span>
+                              )}
+                            </div>
+                            <h3 className={`text-sm font-semibold truncate ${computedTaskOverdue ? 'text-red-300' : 'text-white'}`}>
+                              {task.task_name}
+                            </h3>
+                          </div>
+                        </div>
 
-                        {/* Large soft cloud shape */}
-                        <svg viewBox="0 0 160 80" style={{
+                        <Button
+                          onClick={() => !isAdded && handleQuickAddTask(task)}
+                          disabled={isAdded}
+                          size="sm"
+                          className={`${isAdded
+                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                            : computedTaskOverdue
+                              ? 'bg-red-600/20 text-red-100 hover:bg-red-600 border border-red-500/30'
+                              : 'bg-blue-600/20 text-blue-100 hover:bg-blue-600 border border-blue-500/30'
+                            } h-9 px-4 rounded-lg font-bold transition-all duration-300 whitespace-nowrap relative z-10 tracker-add-task-btn`}
+                        >
+                          {isAdded ? 'Added' : <><Plus className="w-4 h-4 mr-2" /> Add Task</>}
+                        </Button>
+
+                        {/* Cloud Illustration Container */}
+                        <div className="tracker-card-cloud-wrapper" style={{
                           position: 'absolute',
-                          bottom: 0,
                           right: 0,
-                          width: '160px',
-                          height: '80px',
+                          top: 0,
+                          bottom: 0,
+                          width: '280px',
+                          overflow: 'hidden',
                           pointerEvents: 'none',
-                          opacity: 0.4
-                        }} preserveAspectRatio="none">
-                          <path d="M20,65 Q35,30 65,40 Q85,15 115,30 Q145,20 160,65 Z"
-                            fill="var(--card-accent-color)" opacity="0.5" />
-                        </svg>
-
-                        {/* Cloud Upload Icon */}
-                        <div className="tracker-cloud-upload-container">
-                          <svg viewBox="0 0 24 24" width="48" height="48" style={{ display: 'block' }}>
-                            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="var(--card-accent-color)" />
-                            <path d="M12 9l-3.5 3.5h2.5V17h2v-4.5h2.5L12 9z" fill="#000000" />
+                          zIndex: 1
+                        }}>
+                          {/* Scattered dots */}
+                          <svg width="280" height="100%" className="absolute inset-0" style={{ pointerEvents: 'none' }}>
+                            <circle cx="40" cy="15" r="2" fill="var(--card-accent-color)" opacity="0.3" />
+                            <circle cx="90" cy="22" r="2" fill="var(--card-accent-color)" opacity="0.3" />
+                            <circle cx="130" cy="10" r="2" fill="var(--card-accent-color)" opacity="0.3" />
+                            <circle cx="170" cy="28" r="2" fill="var(--card-accent-color)" opacity="0.3" />
+                            <circle cx="210" cy="12" r="2" fill="var(--card-accent-color)" opacity="0.3" />
+                            <circle cx="230" cy="25" r="2" fill="var(--card-accent-color)" opacity="0.3" />
+                            <circle cx="70" cy="30" r="2" fill="var(--card-accent-color)" opacity="0.3" />
                           </svg>
+
+                          {/* Large soft cloud shape */}
+                          <svg viewBox="0 0 160 80" style={{
+                            position: 'absolute',
+                            bottom: 0,
+                            right: 0,
+                            width: '160px',
+                            height: '80px',
+                            pointerEvents: 'none',
+                            opacity: 0.4
+                          }} preserveAspectRatio="none">
+                            <path d="M20,65 Q35,30 65,40 Q85,15 115,30 Q145,20 160,65 Z"
+                              fill="var(--card-accent-color)" opacity="0.5" />
+                          </svg>
+
+                          {/* Cloud Upload Icon */}
+                          <div className="tracker-cloud-upload-container">
+                            <svg viewBox="0 0 24 24" width="48" height="48" style={{ display: 'block' }}>
+                              <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z" fill="var(--card-accent-color)" />
+                              <path d="M12 9l-3.5 3.5h2.5V17h2v-4.5h2.5L12 9z" fill="#000000" />
+                            </svg>
+                          </div>
                         </div>
                       </div>
+
+                      {/* Subtasks — nested beneath their parent task. Tasks with no
+                        subtasks render nothing extra here and look unchanged. */}
+                      {taskSubtasks.length > 0 && (
+                        <div className="tracker-subtask-list pl-8 pr-2 pb-2 space-y-1.5">
+                          {taskSubtasks.map((subtask: any) => (
+                            <div
+                              key={subtask.id}
+                              className={`tracker-subtask-item flex items-center gap-3 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-xs ${subtask.is_completed ? 'opacity-50' : ''}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${subtask.is_completed ? 'bg-green-400' : 'bg-blue-400'}`} />
+                              <span className={`truncate flex-1 min-w-0 ${subtask.is_completed ? 'line-through text-blue-200/40' : 'text-blue-100'}`}>
+                                {subtask.title || subtask.subtask_name || subtask.name || 'Untitled subtask'}
+                              </span>
+                              {typeof subtask.progress === 'number' && (
+                                <span className="text-[10px] font-bold text-blue-300/70 whitespace-nowrap">
+                                  {subtask.progress}%
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

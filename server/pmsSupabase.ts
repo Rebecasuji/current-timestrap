@@ -186,11 +186,11 @@ export const getProjects = async (userRole?: string, userEmpCode?: string, userD
     } else {
       console.log("⚠️ No projects found in PMS database");
     }
-    
+
     if (userEmpCode === 'E0046' || userEmpCode === 'E0048') {
       console.log(`🔄 Applying SPECIAL RESTRICTION for ${userEmpCode}: Software Development projects only`);
-      const softwareProjects = enrichedProjects.filter(p => 
-        p.project_name.toLowerCase().includes('software development') || 
+      const softwareProjects = enrichedProjects.filter(p =>
+        p.project_name.toLowerCase().includes('software development') ||
         (Array.isArray(p.department) && p.department.some(d => d.toLowerCase().includes('software')))
       );
       console.log(`📊 ${userEmpCode} special filter: ${softwareProjects.length} projects`);
@@ -259,10 +259,10 @@ export const getProjects = async (userRole?: string, userEmpCode?: string, userD
 export const getTasks = async (projectId?: string, userDepartment?: string, userEmpCode?: string, userRole?: string): Promise<PMSTask[]> => {
   try {
     console.log("📡 Executing PMS getTasks query for project:", projectId, "userRole:", userRole, "userEmpCode:", userEmpCode);
-    
+
     // Check if user is an admin or specifically authorized
     const isAdmin = userRole === 'admin' || userEmpCode === 'E0001' || userEmpCode === 'E0000';
-    
+
     console.log(`📋 getTasks auth context: isAdmin=${isAdmin}, userEmpCode=${userEmpCode}, userRole=${userRole}, projectCode=${projectId}`);
 
     let query = 'SELECT *, schedule_type, schedule_data FROM project_tasks ORDER BY task_name';
@@ -306,9 +306,9 @@ export const getTasks = async (projectId?: string, userDepartment?: string, user
 export const getDepartmentTasks = async (userDepartment: string, userEmpCode: string, userRole: string, myTasksOnly: boolean = false): Promise<any[]> => {
   try {
     console.log("📡 Executing PMS getDepartmentTasks query for dept:", userDepartment, "myTasksOnly:", myTasksOnly);
-    
+
     const isAdmin = userRole === 'admin' || userEmpCode === 'E0001' || userEmpCode === 'E0000';
-    
+
     // Fetch all projects in the department first to get their metadata
     const projects = await getProjects(userRole, userEmpCode, userDepartment);
     if (projects.length === 0) return [];
@@ -448,6 +448,46 @@ export const getSubtasks = async (taskId?: string, userDepartment?: string, user
   }
 };
 
+// Batch-fetch subtasks for a set of parent task IDs in a single query and group
+// them by task_id. Used by /api/available-tasks so the Tracker page can show every
+// planned task together with its own subtasks instead of issuing one query per task.
+// Unlike getSubtasks(), this intentionally does NOT filter out completed subtasks —
+// the caller (available-tasks) wants the full parent/child list for every task that
+// is currently visible, and completed subtasks should still render (just not hidden).
+export const getSubtasksForTaskIds = async (taskIds: string[]): Promise<Record<string, PMSSubtask[]>> => {
+  const grouped: Record<string, PMSSubtask[]> = {};
+  if (!taskIds || taskIds.length === 0) return grouped;
+
+  try {
+    const uniqueIds = Array.from(new Set(taskIds.filter(Boolean)));
+    if (uniqueIds.length === 0) return grouped;
+
+    console.log("🔍 PMS getSubtasksForTaskIds called for", uniqueIds.length, "tasks");
+
+    const result: QueryResult = await pmsPool.query(
+      `SELECT s.*, e.emp_code as assigned_emp_code
+       FROM subtasks s
+       LEFT JOIN employees e ON s.assigned_to::text = e.id::text OR s.assigned_to::text = e.emp_code::text
+       WHERE s.task_id = ANY($1::uuid[])
+       ORDER BY s.created_at ASC NULLS LAST`,
+      [uniqueIds]
+    );
+
+    const subtasks = (result.rows || []) as PMSSubtask[];
+    for (const subtask of subtasks) {
+      const key = String(subtask.task_id);
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(subtask);
+    }
+
+    console.log(`📊 PMS getSubtasksForTaskIds returned ${subtasks.length} subtasks across ${Object.keys(grouped).length} tasks`);
+    return grouped;
+  } catch (error) {
+    console.error("💥 Error in getSubtasksForTaskIds:", error);
+    return grouped; // Return whatever we have (empty on failure) so callers degrade gracefully
+  }
+};
+
 export const getSubtaskById = async (subtaskId: string): Promise<PMSSubtask | null> => {
   try {
     const result: QueryResult = await pmsPool.query(
@@ -574,12 +614,12 @@ export const updateTaskProgress = async (taskId: string, directProgress?: number
 
     const setParts = [`progress = $1`, `status = $2`, `updated_at = NOW()`];
     const queryParams: any[] = [progress, progress === 100 ? 'Completed' : 'In Progress'];
-    
+
     if (progress === 100 && date) {
       setParts.push(`end_date = $${queryParams.length + 1}`);
       queryParams.push(date);
     }
-    
+
     queryParams.push(taskId);
     const result: QueryResult = await pmsPool.query(
       `UPDATE project_tasks SET ${setParts.join(', ')} WHERE id = $${queryParams.length}::uuid RETURNING key_step_id`,
@@ -682,7 +722,7 @@ export const getProjectProgress = async (projectId: string): Promise<number> => 
 export const saveSiteReportToPMS = async (report: any) => {
   try {
     console.log(`📡 Saving site report for ${report.projectName} to PMS internal records`);
-    
+
     // Check if table exists, if not create it (best effort for "internal records")
     await pmsPool.query(`
       CREATE TABLE IF NOT EXISTS site_reports (

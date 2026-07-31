@@ -3418,6 +3418,12 @@ export async function registerRoutes(
 
       console.log(`[AVAILABLE-TASKS] Found ${allProjectTasks.length} tasks across all projects`);
 
+      // Fetch subtasks for every task in one batched query (grouped by task_id) so we
+      // don't issue a separate DB round-trip per task. Tasks with no subtasks simply
+      // get an empty array back — they render normally with nothing nested beneath them.
+      const { getSubtasksForTaskIds } = await import('./pmsSupabase');
+      const subtasksByTaskId = await getSubtasksForTaskIds(allProjectTasks.map((t: any) => t.id));
+
       for (const task of allProjectTasks) {
         const project = task.project;
         if (!project) continue;
@@ -3441,7 +3447,8 @@ export async function registerRoutes(
           isOverdue: (isTaskOverdue || isProjectOverdue) ? true : false,
           source: "PMS",
           isLocked: isAutoSelected,
-          isAutoSelected: isAutoSelected
+          isAutoSelected: isAutoSelected,
+          subtasks: subtasksByTaskId[String(task.id)] || []
         });
       }
 
