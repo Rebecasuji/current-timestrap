@@ -11,15 +11,17 @@ interface ShiftSelectorProps {
   onFinalSubmit: () => void;
   canSubmit: boolean;
   isLocked?: boolean;
+  disabledReason?: string | null;
 }
 
-export default function ShiftSelector({ 
-  shiftHours, 
-  onShiftChange, 
+export default function ShiftSelector({
+  shiftHours,
+  onShiftChange,
   totalWorkedMinutes,
   onFinalSubmit,
   canSubmit,
-  isLocked
+  isLocked,
+  disabledReason
 }: ShiftSelectorProps) {
   const shiftMinutes = shiftHours * 60;
   const remainingMinutes = Math.max(0, shiftMinutes - totalWorkedMinutes);
@@ -43,11 +45,11 @@ export default function ShiftSelector({
         </div>
         <div className="flex-1">
           <p className="text-xs text-blue-200/60 mb-1 tracker-stat-label">Shift Target</p>
-          <Select 
-            value={shiftHours.toString()} 
+          <Select
+            value={shiftHours.toString()}
             onValueChange={(v) => onShiftChange(parseInt(v) as 4 | 8 | 12)}
           >
-            <SelectTrigger 
+            <SelectTrigger
               className="bg-slate-700/50 border-blue-500/20 text-white h-8"
               data-testid="select-shift-hours"
             >
@@ -89,8 +91,8 @@ export default function ShiftSelector({
           <p className="text-xl font-bold text-white tracker-stat-value" data-testid="text-remaining">
             {remainingMinutes > 0 ? formatTime(remainingMinutes) : 'Complete!'}
           </p>
-          <Progress 
-            value={progressPercentage} 
+          <Progress
+            value={progressPercentage}
             className="h-1.5 mt-2 bg-slate-700"
           />
         </div>
@@ -99,19 +101,17 @@ export default function ShiftSelector({
       <div className="tracker-stat-separator" />
 
       {/* Final Submit */}
-      <Card className={`tracker-inner-stat-card card-submit p-4 flex items-center justify-center transition-all ${
-        !canSubmit || isLocked ? 'submit-disabled' : 'submit-active'
-      }`}>
+      <Card className={`tracker-inner-stat-card card-submit p-4 flex flex-col items-center justify-center gap-1.5 transition-all ${!canSubmit || isLocked ? 'submit-disabled' : 'submit-active'
+        }`}>
         <Button
           onClick={onFinalSubmit}
           disabled={!canSubmit || isLocked}
-          className={`w-full transition-all duration-200 tracker-submit-button ${
-            isLocked 
+          className={`w-full transition-all duration-200 tracker-submit-button ${isLocked
               ? 'bg-blue-600/20 text-blue-300 opacity-50 cursor-not-allowed border-none'
-              : canSubmit 
-                ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 shadow-lg shadow-green-500/10 text-white border-none' 
+              : canSubmit
+                ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 shadow-lg shadow-green-500/10 text-white border-none'
                 : 'bg-slate-700 text-slate-400 cursor-not-allowed opacity-50 border-none'
-          }`}
+            }`}
           data-testid="button-final-submit"
         >
           {isLocked ? (
@@ -126,6 +126,11 @@ export default function ShiftSelector({
             </>
           )}
         </Button>
+        {!isLocked && !canSubmit && disabledReason && (
+          <p className="text-[11px] text-amber-300/90 text-center leading-snug" data-testid="text-submit-blocked-reason">
+            {disabledReason}
+          </p>
+        )}
       </Card>
     </div>
   );

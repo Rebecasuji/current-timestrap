@@ -451,10 +451,21 @@ export default function TrackerPage({ user }: TrackerPageProps) {
     },
   });
 
-  const parseDuration = (duration: string): number => {
-    const match = duration.match(/(\d+)h\s*(\d+)m?/);
-    if (match) {
-      return parseInt(match[1]) * 60 + parseInt(match[2] || '0');
+  const parseDuration = (duration: string | number): number => {
+    if (duration === null || duration === undefined || duration === '') return 0;
+    const str = String(duration).trim();
+    const hMatch = str.match(/(\d+)h/);
+    const mMatch = str.match(/(\d+)m/);
+    if (hMatch || mMatch) {
+      return (hMatch ? parseInt(hMatch[1], 10) : 0) * 60 + (mMatch ? parseInt(mMatch[1], 10) : 0);
+    }
+    const colonMatch = str.match(/^(\d+):(\d+)$/);
+    if (colonMatch) {
+      return parseInt(colonMatch[1], 10) * 60 + parseInt(colonMatch[2], 10);
+    }
+    const numeric = Number(str);
+    if (!isNaN(numeric)) {
+      return Math.round(numeric * 60);
     }
     return 0;
   };
@@ -469,11 +480,27 @@ export default function TrackerPage({ user }: TrackerPageProps) {
     return { title: colonParts[0] || taskDesc, subTask: '', description: colonParts[1]?.trim() || '' };
   };
 
+  // Fallback: derive minutes from start/end time when durationMinutes is missing or 0.
+  // Used both when assembling `allTasks` (so the table's Duration column is always
+  // correct) and by calculateTaskMinutes below (so totals stay in sync with the table).
+  const deriveMinutesFromTimes = (startTime?: string, endTime?: string): number => {
+    if (!startTime || !endTime) return 0;
+    try {
+      const [sh, sm] = startTime.split(':').map(Number);
+      const [eh, em] = endTime.split(':').map(Number);
+      const duration = (eh * 60 + em) - (sh * 60 + sm);
+      return duration > 0 ? duration : 0;
+    } catch {
+      return 0;
+    }
+  };
+
   // Combine pending tasks with submitted entries for display
   const allTasks: Task[] = useMemo(() => [
     // Convert server entries to Task format
     ...todaysEntries.map(entry => {
       const parsed = parseTaskDescription(entry.taskDescription);
+      const parsedMinutes = parseDuration(entry.totalHours);
       return {
         id: entry.id,
         project: entry.projectName,
@@ -487,7 +514,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
         toolsUsed: entry.toolsUsed || [],
         startTime: entry.startTime,
         endTime: entry.endTime,
-        durationMinutes: parseDuration(entry.totalHours),
+        durationMinutes: parsedMinutes > 0 ? parsedMinutes : deriveMinutesFromTimes(entry.startTime, entry.endTime),
         percentageComplete: entry.percentageComplete ?? 0,
         pmsId: entry.pmsId || undefined,
         pmsSubtaskId: entry.pmsSubtaskId || undefined,
@@ -498,8 +525,16 @@ export default function TrackerPage({ user }: TrackerPageProps) {
         rejectionReason: entry.rejectionReason || undefined,
       };
     }),
-    // Add pending local tasks
-    ...pendingTasks.map(t => ({ ...t, serverStatus: 'draft' as const })),
+    // Add pending local tasks — backfill durationMinutes from start/end time
+    // whenever it wasn't set (or is 0) at creation time, so the Duration
+    // column shows the real value instead of "0m".
+    ...pendingTasks.map(t => ({
+      ...t,
+      serverStatus: 'draft' as const,
+      durationMinutes: (t.durationMinutes && t.durationMinutes > 0)
+        ? t.durationMinutes
+        : deriveMinutesFromTimes(t.startTime, t.endTime),
+    })),
   ], [todaysEntries, pendingTasks]);
 
   // Apply filters to tasks
@@ -660,6 +695,31 @@ export default function TrackerPage({ user }: TrackerPageProps) {
     todaysTasksOnly.length > 0 &&
     (hasEnoughHours || settings.forceAllowFinalSubmit) &&
     !hasInvalidDraftTasks;
+
+  // Human-readable reason the Final Submit button is disabled, so the actual
+  // blocker is visible instead of a silently greyed-out button.
+  const submitBlockReason = useMemo(() => {
+    if (isSubmitting) return null;
+    if (needsPlan) return "You haven't submitted today's Plan for the Day yet.";
+    if (todaysTasksOnly.length === 0) return 'No tasks logged yet for this date.';
+    if (hasInvalidDraftTasks) {
+      const draftTasks = todaysTasksOnly.filter(t => t.serverStatus === 'draft');
+      const missing = new Set<string>();
+      draftTasks.forEach(t => {
+        if (!t.project) missing.add('project');
+        if (!t.title) missing.add('title');
+        if (!t.startTime || !t.endTime) missing.add('start/end time');
+        if (!t.toolsUsed || t.toolsUsed.length === 0) missing.add('tools used');
+        if (!(t as any).quantify) missing.add('quantify field');
+      });
+      return `One or more draft tasks are missing: ${Array.from(missing).join(', ')}. Edit them to fill these in.`;
+    }
+    if (!hasEnoughHours && !settings.forceAllowFinalSubmit) {
+      const remaining = REQUIRED_MINUTES - totalCombinedMinutes;
+      return `You need ${formatDuration(remaining)} more logged before you can submit (8-hour rule).`;
+    }
+    return null;
+  }, [isSubmitting, needsPlan, todaysTasksOnly, hasInvalidDraftTasks, hasEnoughHours, settings.forceAllowFinalSubmit, totalCombinedMinutes]);
 
 
   const handleSaveTask = async (taskData: Task) => {
@@ -1217,6 +1277,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
             onFinalSubmit={handleFinalSubmit}
             canSubmit={canSubmit}
             isLocked={alreadySubmittedToday && pendingTasks.length === 0}
+            disabledReason={submitBlockReason}
           />
         </div>
 

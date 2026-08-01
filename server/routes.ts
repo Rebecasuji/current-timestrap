@@ -1515,6 +1515,22 @@ export async function registerRoutes(
         return 0;
       };
 
+      // Fallback used when an entry's stored totalHours is missing/unparseable
+      // (e.g. drafts created via Plan-for-Day auto-sync or calendar sync with a
+      // bad/blank total_hours value). Without this, a valid entry with real
+      // start/end times could be counted as 0 minutes and wrongly block submission.
+      const deriveMinutesFromTimes = (startTime?: string | null, endTime?: string | null): number => {
+        if (!startTime || !endTime) return 0;
+        try {
+          const [sh, sm] = startTime.split(':').map(Number);
+          const [eh, em] = endTime.split(':').map(Number);
+          const diff = (eh * 60 + em) - (sh * 60 + sm);
+          return diff > 0 ? diff : 0;
+        } catch {
+          return 0;
+        }
+      };
+
       const formatDuration = (minutes: number): string => {
         const hours = Math.floor(minutes / 60);
         const mins = minutes % 60;
@@ -1522,7 +1538,8 @@ export async function registerRoutes(
       };
 
       const totalMinutes = dailyEntries.reduce((sum, entry) => {
-        return sum + parseDurationToMinutes(entry.totalHours);
+        const parsed = parseDurationToMinutes(entry.totalHours);
+        return sum + (parsed > 0 ? parsed : deriveMinutesFromTimes(entry.startTime, entry.endTime));
       }, 0);
 
       // Fetch LMS hours to validate 8-hour rule
