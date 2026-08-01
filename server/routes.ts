@@ -1602,12 +1602,19 @@ export async function registerRoutes(
             employeeEmail: employee.email,
             date,
             totalHours: totalHoursFormatted,
-            tasks: tasks.map(t => ({
-              projectName: t.projectName || '—',
-              taskDescription: t.taskDescription || '—',
-              totalHours: t.totalHours || '—',
-              status: t.status || 'pending'
-            }))
+            tasks: tasks.map(t => {
+              const parsedMinutes = parseDurationToMinutes(t.totalHours);
+              const minutes = parsedMinutes > 0 ? parsedMinutes : deriveMinutesFromTimes(t.startTime, t.endTime);
+              return {
+                projectName: t.projectName || '—',
+                taskDescription: t.taskDescription || '—',
+                totalHours: minutes > 0 ? formatDuration(minutes) : (t.totalHours || '—'),
+                status: t.status || 'pending',
+                startTime: t.startTime,
+                endTime: t.endTime,
+                percentageComplete: t.percentageComplete,
+              };
+            })
           });
           if (confirmResult?.success) {
             console.log(`[CONFIRMATION EMAIL] Sent to ${employee.email}`);

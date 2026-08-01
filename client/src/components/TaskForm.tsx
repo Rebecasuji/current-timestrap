@@ -56,6 +56,14 @@ interface Task {
   endTime: string;
   percentageComplete: number;
   isRecording?: boolean;
+  // Present so this Task shape is compatible with the richer Task type
+  // (client/src/components/TaskTable.tsx) that callers like TaskEntryPage
+  // use for their onSave handler. Computed and filled in at submit time in
+  // handleSubmit below — never left undefined — so downstream consumers
+  // (e.g. formatDuration(taskData.durationMinutes)) get a real number
+  // instead of NaN.
+  durationMinutes: number;
+  isComplete: boolean;
 }
 
 interface TaskFormProps {
@@ -93,6 +101,8 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     percentageComplete: task?.percentageComplete || 0,
     pmsId: task?.pmsId,
     pmsSubtaskId: (task as any)?.pmsSubtaskId,
+    durationMinutes: (task as any)?.durationMinutes || 0,
+    isComplete: (task as any)?.isComplete || false,
   });
 
   const [isRecording, setIsRecording] = useState(false);
@@ -837,6 +847,16 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     // include original id when saving so drafts are updated
     const payload: any = { ...formData };
     if (task?.id) payload.id = task.id;
+    // Recompute from the live start/end time so a just-edited time range is
+    // reflected, rather than trusting whatever durationMinutes formData was
+    // initialized with (which could be stale or 0 for a brand-new task).
+    if (formData.startTime && formData.endTime) {
+      const [sh, sm] = formData.startTime.split(':').map(Number);
+      const [eh, em] = formData.endTime.split(':').map(Number);
+      const diff = (eh * 60 + em) - (sh * 60 + sm);
+      payload.durationMinutes = diff > 0 ? diff : 0;
+    }
+    payload.isComplete = (task as any)?.isComplete || false;
     // include pmsId if present
     // include pmsId if present
     // @ts-ignore

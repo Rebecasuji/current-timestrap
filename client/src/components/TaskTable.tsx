@@ -182,7 +182,7 @@ export default function TaskTable({ tasks, onEdit, onDelete, onComplete, onReope
                   </div>
                 </TableCell>
                 <TableCell className="text-right">
-                  {(task.serverStatus === 'draft' || task.serverStatus === 'rejected') ? (
+                  {(task.serverStatus === 'draft' || task.serverStatus === 'rejected' || task.serverStatus === 'pending') ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -224,14 +224,16 @@ export default function TaskTable({ tasks, onEdit, onDelete, onComplete, onReope
                             Mark Complete
                           </DropdownMenuItem>
                         )}
-                        <DropdownMenuItem
-                          onClick={() => onDelete(task.id)}
-                          className="text-red-400 focus:bg-slate-700 focus:text-red-300"
-                          data-testid={`button-delete-${task.id}`}
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Delete
-                        </DropdownMenuItem>
+                        {(task.serverStatus === 'draft' || task.serverStatus === 'pending') && (
+                          <DropdownMenuItem
+                            onClick={() => onDelete(task.id)}
+                            className="text-red-400 focus:bg-slate-700 focus:text-red-300"
+                            data-testid={`button-delete-${task.id}`}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   ) : (

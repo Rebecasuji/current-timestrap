@@ -11,6 +11,12 @@ import { Task } from '@/components/TaskTable';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 
+// TaskForm's onSave hands back a task that may not have an id yet (new,
+// not-yet-created tasks don't get one until the server assigns it) — so
+// handleSave below accepts that shape rather than TaskTable's Task, which
+// requires id for tasks already known to exist.
+type SavedTask = Omit<Task, 'id'> & { id?: string };
+
 const formatDuration = (minutes: number): string => {
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
@@ -100,7 +106,7 @@ export default function TaskEntryPage() {
   }
 
   const updateMutation = useMutation({
-    mutationFn: async (taskData: Task) => {
+    mutationFn: async (taskData: SavedTask) => {
       const response = await apiRequest('PUT', `/api/time-entries/${id}`, {
         projectName: taskData.project,
         taskDescription: formatTaskDescription(taskData),
@@ -135,7 +141,7 @@ export default function TaskEntryPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: async (taskData: Task) => {
+    mutationFn: async (taskData: SavedTask) => {
       const response = await apiRequest('POST', '/api/time-entries', {
         employeeId: user?.id,
         employeeCode: (user as any)?.employeeCode,
@@ -155,7 +161,13 @@ export default function TaskEntryPage() {
         pmsId: (taskData as any).pmsId,
         pmsSubtaskId: (taskData as any).pmsSubtaskId,
         keyStep: (taskData as any).keyStep,
-        status: 'pending',
+        // NOTE: intentionally 'draft', not 'pending'. A task only becomes
+        // 'pending' when the employee does Final Submit for the day (which
+        // creates the daily submission record and sends the summary email).
+        // Saving directly as 'pending' here made freshly-added tasks look
+        // already-submitted (locking editing) even though no submission had
+        // actually happened.
+        status: 'draft',
       });
       return response.json();
     },
@@ -174,7 +186,7 @@ export default function TaskEntryPage() {
     },
   });
 
-  const handleSave = (taskData: Task) => {
+  const handleSave = (taskData: SavedTask) => {
     if (id) {
       updateMutation.mutate(taskData);
     } else {
@@ -199,10 +211,10 @@ export default function TaskEntryPage() {
     <div className="min-h-screen bg-[#0B1120] text-white p-6 relative overflow-hidden">
       {/* Background gradients */}
       <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/10 via-transparent to-transparent pointer-events-none" />
-      
+
       <div className="max-w-4xl mx-auto relative z-10 pt-4">
-        <Button 
-          variant="ghost" 
+        <Button
+          variant="ghost"
           onClick={handleCancel}
           className="mb-6 text-slate-400 hover:text-white hover:bg-white/5 transition-all"
         >
@@ -224,7 +236,7 @@ export default function TaskEntryPage() {
               {format(new Date(dateParam), 'EEEE, MMMM d, yyyy')}
             </div>
           </div>
-          
+
           <TaskForm
             task={task as any}
             date={dateParam}

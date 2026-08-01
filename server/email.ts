@@ -73,6 +73,38 @@ function formatTimelineSafe(val: any): string {
   return '—';
 }
 
+function parseDurationSafe(duration: any): number {
+  if (!duration) return 0;
+  const str = String(duration).trim();
+  const hMatch = str.match(/(\d+)h/);
+  const mMatch = str.match(/(\d+)m/);
+  if (hMatch || mMatch) {
+    return (hMatch ? parseInt(hMatch[1], 10) : 0) * 60 + (mMatch ? parseInt(mMatch[1], 10) : 0);
+  }
+  const colonMatch = str.match(/^(\d+):(\d+)$/);
+  if (colonMatch) {
+    return parseInt(colonMatch[1], 10) * 60 + parseInt(colonMatch[2], 10);
+  }
+  const numeric = Number(str);
+  if (!isNaN(numeric)) return Math.round(numeric * 60);
+  return 0;
+}
+
+function deriveMinutesFromTimesSafe(startTime: any, endTime: any): number {
+  if (!startTime || !endTime) return 0;
+  const s = String(startTime).match(/^(\d{1,2}):(\d{2})/);
+  const e = String(endTime).match(/^(\d{1,2}):(\d{2})/);
+  if (!s || !e) return 0;
+  const diff = (parseInt(e[1], 10) * 60 + parseInt(e[2], 10)) - (parseInt(s[1], 10) * 60 + parseInt(s[2], 10));
+  return diff > 0 ? diff : 0;
+}
+
+function formatHrsSafe(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}h ${m}m`;
+}
+
 function generateTaskTable(tasks: any[]) {
   return `
     <table style="width:100%; border-collapse: collapse; margin-top: 20px; font-size: 13px;">
@@ -91,6 +123,16 @@ function generateTaskTable(tasks: any[]) {
     const startDate = formatTimelineSafe(task.startTime || task.start_time);
     const endDate = formatTimelineSafe(task.endTime || task.end_time);
 
+    // Fall back to computing Hrs from start/end time whenever the stored
+    // totalHours is missing or doesn't parse (e.g. drafts auto-created via
+    // Plan-for-Day/calendar sync with a blank total_hours), so the email
+    // never shows a blank duration for a task that clearly has real times.
+    const storedMinutes = parseDurationSafe(task.totalHours);
+    const minutes = storedMinutes > 0
+      ? storedMinutes
+      : deriveMinutesFromTimesSafe(task.startTime || task.start_time, task.endTime || task.end_time);
+    const hrsDisplay = minutes > 0 ? formatHrsSafe(minutes) : (task.totalHours || '—');
+
     return `
           <tr style="border-bottom: 1px solid #e2e8f0;">
             <td style="padding: 10px; border: 1px solid #e2e8f0;">
@@ -102,7 +144,7 @@ function generateTaskTable(tasks: any[]) {
               <div>S: ${startDate}</div>
               <div style="margin-top:2px;">E: ${endDate}</div>
             </td>
-            <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: bold;">${task.totalHours || '—'}</td>
+            <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: bold;">${hrsDisplay}</td>
             <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center;">
                <span style="padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; 
                 ${task.status === 'approved' ? 'background: #dcfce7; color: #166534;' :
