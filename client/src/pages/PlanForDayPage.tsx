@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest, queryClient } from '@/lib/queryClient';
-import { CheckCircle2, Circle, ArrowRight, ArrowLeft, Send, AlertTriangle, Clock, Calendar as CalendarIcon, ClipboardList, Target, Power, PowerOff, Lock, ArrowUp, ArrowDown, Search as PlannedTaskSearchIcon, ChevronUp, ChevronDown, Minus, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Circle, ArrowRight, ArrowLeft, Send, AlertTriangle, Clock, Calendar as CalendarIcon, ClipboardList, Target, Power, PowerOff, Lock, ArrowUp, ArrowDown, Search as PlannedTaskSearchIcon, ChevronUp, ChevronDown, Minus, ShieldCheck, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, addDays } from 'date-fns';
 import { Input } from '@/components/ui/input';
@@ -34,6 +34,7 @@ export default function PlanForDayPage() {
   const [isCalendarPreviewOpen, setIsCalendarPreviewOpen] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [serverTimeOffset, setServerTimeOffset] = useState(0);
+  const [isSubmitted, setIsSubmitted] = useState(false);
 
   const today = format(new Date(), 'yyyy-MM-dd');
   const isController = user?.role === 'admin' || user?.role === 'manager' || user?.employeeCode === 'E0046';
@@ -511,8 +512,9 @@ export default function PlanForDayPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/daily-plans/today', user?.id] });
-      toast({ title: 'Success', description: 'Your Plan for the Day has been submitted!' });
-      setLocation('/tracker');
+      // Show instant success overlay, then navigate after a brief moment
+      setIsSubmitted(true);
+      setTimeout(() => setLocation('/tracker'), 1800);
     },
     onError: (err: any) => {
       toast({ title: 'Submission Failed', description: err.message || 'Failed to submit plan.', variant: 'destructive' });
@@ -749,6 +751,37 @@ export default function PlanForDayPage() {
     h = h % 12 || 12;
     return `${h}:${mStr} ${period}`;
   };
+
+  // Instant success overlay — shown as soon as the API responds 201.
+  // Keeps the user informed without any blank/loading gap.
+  if (isSubmitted) {
+    return (
+      <div className="min-h-screen bg-[#020617] text-white flex items-center justify-center">
+        <motion.div
+          initial={{ scale: 0.6, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 280, damping: 20 }}
+          className="flex flex-col items-center gap-6 text-center"
+        >
+          <div className="relative">
+            <div className="absolute inset-0 rounded-full bg-green-500/20 animate-ping" />
+            <div className="w-28 h-28 rounded-full bg-green-500/20 border-2 border-green-500/50 flex items-center justify-center relative">
+              <CheckCircle2 className="w-14 h-14 text-green-400" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-3xl font-black text-white">Plan Submitted!</h2>
+            <p className="text-slate-400 font-medium">Your day is locked in. Redirecting to Tracker…</p>
+          </div>
+          <div className="flex gap-1">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="w-2 h-2 rounded-full bg-green-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+            ))}
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-4 md:p-8 page-bg-fix">
@@ -1122,16 +1155,17 @@ export default function PlanForDayPage() {
                     </span>
                   </div>
                   <Button
-                    className={`w-full h-12 text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-900/20 ${isValidPlan ? 'bg-blue-600 hover:bg-blue-500 hover:scale-[1.02] text-white' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
-                    disabled={!isValidPlan || !isWindowOpen}
+                    className={`w-full h-12 text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-900/20 ${isValidPlan && !submitPlanMutation.isPending ? 'bg-blue-600 hover:bg-blue-500 hover:scale-[1.02] text-white' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
+                    disabled={!isValidPlan || !isWindowOpen || submitPlanMutation.isPending}
                     onClick={handleNext}
                   >
-                    {isValidPlan
-                      ? "LOCK IN MY PLAN"
+                    {submitPlanMutation.isPending ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />SUBMITTING YOUR PLAN...</>
+                    ) : isValidPlan
+                      ? <><span>LOCK IN MY PLAN</span><ArrowRight className="w-4 h-4 ml-2" /></>
                       : timingErrors.length > 0
                         ? "FIX TIMING ERRORS TO CONTINUE"
                         : `NEED ${(requiredMinutes / 60).toFixed(requiredMinutes % 60 === 0 ? 0 : 1)} HOURS TOTAL (CURRENT: ${Math.floor(totalWorkingMinutes / 60)}h ${totalWorkingMinutes % 60}m)`}
-                    {isValidPlan && <ArrowRight className="w-4 h-4 ml-2" />}
                   </Button>
                 </div>
               </div>
@@ -1169,8 +1203,10 @@ export default function PlanForDayPage() {
                 </div>
               </div>
               <div className="flex gap-4 pt-4">
-                <Button variant="outline" onClick={() => setShowUnselectedForm(false)} className="px-8 py-6 rounded-2xl"><ArrowLeft className="w-5 h-5 mr-2" /> Back</Button>
-                <Button onClick={submitPlan} className="flex-1 py-6 bg-gradient-to-r from-amber-600 to-orange-600 text-white font-black text-lg rounded-2xl" disabled={submitPlanMutation.isPending}>SUBMIT PLAN <Send className="w-6 h-6 ml-3" /></Button>
+                <Button variant="outline" onClick={() => setShowUnselectedForm(false)} disabled={submitPlanMutation.isPending} className="px-8 py-6 rounded-2xl"><ArrowLeft className="w-5 h-5 mr-2" /> Back</Button>
+                <Button onClick={submitPlan} className="flex-1 py-6 bg-gradient-to-r from-amber-600 to-orange-600 text-white font-black text-lg rounded-2xl" disabled={submitPlanMutation.isPending}>
+                  {submitPlanMutation.isPending ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />SUBMITTING...</> : <>SUBMIT PLAN <Send className="w-6 h-6 ml-3" /></>}
+                </Button>
               </div>
             </CardContent>
           </Card>

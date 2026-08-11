@@ -255,11 +255,19 @@ export function toTaskUuid(taskId: string): string {
 
 export async function resolvePmsUserId(employeeCode: string): Promise<string | null> {
   if (!employeeCode) return null;
-  const result = await pmsPool.query(
-    `SELECT u.id FROM users u JOIN employees e ON u.employee_id = e.id WHERE e.emp_code = $1 LIMIT 1`,
-    [employeeCode]
-  );
-  return result.rows[0]?.id || null;
+  try {
+    // Use a 5-second timeout so test/unknown employees don't hang the request
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+    const queryPromise = pmsPool.query(
+      `SELECT u.id FROM users u JOIN employees e ON u.employee_id = e.id WHERE e.emp_code = $1 LIMIT 1`,
+      [employeeCode]
+    ).then((result: any) => result.rows[0]?.id || null);
+    const result = await Promise.race([queryPromise, timeoutPromise]);
+    return result;
+  } catch (err) {
+    console.warn(`[PMS] resolvePmsUserId failed for ${employeeCode}:`, err);
+    return null;
+  }
 }
 
 // PMS's color_key column is a free-text string (e.g. "peacock"). Timestrap's

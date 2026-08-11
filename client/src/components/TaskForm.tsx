@@ -672,6 +672,26 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
   // window) — the timeline instead preserves the order/flow of the day.
   const IDLE_GAP_SECONDS = 120; // gaps of 2+ minutes with no tracked activity are shown as idle
 
+  // STEP 5 — Rule-Based Task Matching: a block is "Matched" if the tools it
+  // contains overlap with what the employee planned for this task
+  // (formData.toolsUsed), "Partial Match" if only some overlap, and
+  // "Unclassified" if none do (or nothing was planned to compare against).
+  // Comparison is case-insensitive/trimmed, mirroring the existing pattern
+  // used server-side in toolUsageValidation.ts.
+  const computeMatchStatus = (
+    blockTools: string[],
+    plannedTools: string[]
+  ): { status: 'Matched' | 'Partial Match' | 'Unclassified'; ratio: number } => {
+    if (blockTools.length === 0 || plannedTools.length === 0) {
+      return { status: 'Unclassified', ratio: 0 };
+    }
+    const plannedNormalized = new Set(plannedTools.map((t) => t.trim().toLowerCase()));
+    const matchedCount = blockTools.filter((t) => plannedNormalized.has(t.trim().toLowerCase())).length;
+    const ratio = matchedCount / blockTools.length;
+    const status = ratio >= 0.6 ? 'Matched' : ratio >= 0.25 ? 'Partial Match' : 'Unclassified';
+    return { status, ratio };
+  };
+
   const activityTimeline = useMemo(() => {
     type TimelineBlock = {
       type: 'activity' | 'idle';
@@ -679,6 +699,8 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
       endTime: string;
       durationSeconds: number;
       tools: string[]; // distinct app/site labels touched during this block, in order
+      matchStatus?: 'Matched' | 'Partial Match' | 'Unclassified';
+      matchRatio?: number;
     };
 
     if (!actualWorkedTools.length) return [] as TimelineBlock[];
@@ -697,33 +719,47 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
     const blocks: TimelineBlock[] = [];
     let current: TimelineBlock | null = null;
 
+    const closeCurrent = () => {
+      if (!current) return;
+      if (current.type === 'activity') {
+        const { status, ratio } = computeMatchStatus(current.tools, formData.toolsUsed || []);
+        current.matchStatus = status;
+        current.matchRatio = ratio;
+      }
+      blocks.push(current);
+    };
+
     for (const entry of sorted) {
       const isIdleEntry = entry.activityType === 'idle';
       const start = entry.startTime;
       const end = entry.endTime;
+      const label = isIdleEntry ? null : labelFor(entry);
       const gapSeconds = current
         ? Math.round((new Date(start).getTime() - new Date(current.endTime).getTime()) / 1000)
         : 0;
 
       if (isIdleEntry) {
-        if (current) blocks.push(current);
+        closeCurrent();
         current = null;
         blocks.push({ type: 'idle', startTime: start, endTime: end, durationSeconds: entry.durationSeconds, tools: [] });
         continue;
       }
 
-      if (current && current.type === 'activity' && gapSeconds < IDLE_GAP_SECONDS) {
-        // Same continuous working stretch — extend it and record the tool.
+      // A block continues only if it's the SAME tool/app AND within the idle
+      // gap threshold — a tool change always starts a new block, even with
+      // no time gap at all (this is what fixes multi-tool blocks being
+      // merged into one long, unreadable, unmatchable entry).
+      const sameTool = current && current.type === 'activity' && current.tools.length === 1 && current.tools[0] === label;
+
+      if (current && current.type === 'activity' && sameTool && gapSeconds < IDLE_GAP_SECONDS) {
         current.endTime = end;
         current.durationSeconds += entry.durationSeconds;
-        const label = labelFor(entry);
-        if (!current.tools.includes(label)) current.tools.push(label);
         continue;
       }
 
-      // Not contiguous with the current block — close it out first.
+      // Not the same tool, or not contiguous — close the current block first.
       if (current) {
-        blocks.push(current);
+        closeCurrent();
         if (current.type === 'activity' && gapSeconds >= IDLE_GAP_SECONDS) {
           blocks.push({
             type: 'idle',
@@ -740,13 +776,13 @@ export default function TaskForm({ task, onSave, onCancel, user, saveButtonText,
         startTime: start,
         endTime: end,
         durationSeconds: entry.durationSeconds,
-        tools: [labelFor(entry)],
+        tools: [label as string],
       };
     }
-    if (current) blocks.push(current);
+    closeCurrent();
 
     return blocks;
-  }, [actualWorkedTools]);
+  }, [actualWorkedTools, formData.toolsUsed]);
 
   // Keep formData.actualWorkTool (persisted with the task) in sync with the
   // auto-fetched TimeGuard data — read-only from the employee's perspective,
@@ -1595,6 +1631,8 @@ function ActivityTimelinePanel({
     endTime: string;
     durationSeconds: number;
     tools: string[];
+    matchStatus?: 'Matched' | 'Partial Match' | 'Unclassified';
+    matchRatio?: number;
   }>;
   aggregated: Array<{
     appName: string;
@@ -1651,9 +1689,22 @@ function ActivityTimelinePanel({
                     {formatDuration(block.durationSeconds)} idle
                   </div>
                 ) : (
-                  <div className="text-xs text-blue-100">
+                  <div className="text-xs text-blue-100 flex items-center gap-2 flex-wrap">
                     <span className="text-blue-200 font-medium">{block.tools.join(', ')}</span>
-                    <span className="text-blue-400/60 ml-2">({formatDuration(block.durationSeconds)})</span>
+                    <span className="text-blue-400/60">({formatDuration(block.durationSeconds)})</span>
+                    {block.matchStatus && (
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${block.matchStatus === 'Matched'
+                          ? 'bg-green-500/15 text-green-400'
+                          : block.matchStatus === 'Partial Match'
+                            ? 'bg-amber-500/15 text-amber-400'
+                            : 'bg-slate-500/15 text-slate-400'
+                          }`}
+                        data-testid={`badge-match-status-${block.matchStatus.replace(' ', '-').toLowerCase()}`}
+                      >
+                        {block.matchStatus}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

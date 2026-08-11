@@ -6,7 +6,11 @@ import { promises as fs } from "fs";
 import fsSync from "fs";
 import path from "path";   // ✅ KEEP THIS
 import { pool } from "./db";
+import { db } from "./db";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { validateToolUsage, getToolActivitySummary, getActualWorkedTools } from "./toolUsageValidation";
+import { getDayActivityMatches } from "./activityMatching";
+import { generateTimesheetForDay, submitTimesheetForDay } from "./timesheetGenerator";
 import { suggestWorkSummaryFromTimeGuard } from "./aiActivitySummary";
 import { pmsPool, saveSiteReportToPMS, getTasks, type PMSTask } from "./pmsSupabase";
 import {
@@ -39,6 +43,10 @@ import {
   insertSiteReportAttachmentSchema,
   dailyPlans,
   planTasks,
+  employees,
+  enforcementConfigs,
+  deviationWarningLogs,
+  deviationOverrides,
 } from "@shared/schema";
 
 import { createClient } from "@supabase/supabase-js";
@@ -567,6 +575,274 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Get actual worked tools error:", error);
       res.status(500).json({ error: "Failed to fetch actual worked tools" });
+    }
+  });
+
+  // ============ STEP 5 — DAY-LEVEL RULE-BASED TASK MATCHING ============
+  // Returns the employee's full-day Activity Timeline, each block already
+  // matched (or not) against their planned tasks for the day, with a
+  // Matched / Partial Match / Unclassified status. Deterministic, no AI —
+  // this is what Step 6 (Warning & Enforcement Engine) should poll/consume
+  // to detect when an employee is off-plan.
+  app.get("/api/timeguard/day-activity-matches", async (req, res) => {
+    try {
+      const { employeeCode, date } = req.query as Record<string, string>;
+      if (!employeeCode || !date) {
+        return res.status(400).json({ error: "employeeCode and date are required" });
+      }
+      const blocks = await getDayActivityMatches(employeeCode, date);
+      res.json({ blocks });
+    } catch (error) {
+      console.error("Get day activity matches error:", error);
+      res.status(500).json({ error: "Failed to fetch day activity matches" });
+    }
+  });
+
+  // ============ STEP 7 — AUTOMATIC TIMESHEET ============
+  // Generate: pulls the day's Activity Timeline matches (Step 5) and writes
+  // actual start/end, active/idle seconds, and match status onto each
+  // planned time_entries row for the day. Safe to call repeatedly before
+  // submission — each call refreshes with the latest activity data.
+  app.post("/api/timesheet/generate", async (req, res) => {
+    try {
+      const { employeeCode, date } = req.body;
+      if (!employeeCode || !date) {
+        return res.status(400).json({ error: "employeeCode and date are required" });
+      }
+      const results = await generateTimesheetForDay(employeeCode, date);
+      res.json({ generated: results });
+    } catch (error) {
+      console.error("Generate timesheet error:", error);
+      res.status(500).json({ error: "Failed to generate timesheet" });
+    }
+  });
+
+  // Submit: locks in every generated (not-yet-submitted) row for the day as
+  // final. Rows that were never generated are skipped and reported back so
+  // the employee can be warned rather than silently submitting stale data.
+  app.post("/api/timesheet/submit", async (req, res) => {
+    try {
+      const { employeeCode, date } = req.body;
+      if (!employeeCode || !date) {
+        return res.status(400).json({ error: "employeeCode and date are required" });
+      }
+      const result = await submitTimesheetForDay(employeeCode, date);
+      res.json(result);
+    } catch (error) {
+      console.error("Submit timesheet error:", error);
+      res.status(500).json({ error: "Failed to submit timesheet" });
+    }
+  });
+
+  // ============ STEP 6 — ENFORCEMENT CONFIG ============
+  // Returns the effective grace period / warning count / interval / lock-enabled
+  // settings for an employee, resolved department-first then organisation-wide,
+  // falling back to hardcoded defaults if nothing is configured yet.
+  app.get("/api/settings/enforcement-config", async (req, res) => {
+    try {
+      const { employeeCode } = req.query as Record<string, string>;
+      if (!employeeCode) {
+        return res.status(400).json({ error: "employeeCode is required" });
+      }
+
+      const [employee] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.employeeCode, employeeCode))
+        .limit(1);
+
+      const DEFAULTS = {
+        gracePeriodSeconds: 300,
+        warningIntervalSeconds: 300,
+        warningCount: 3,
+        lockEnabled: true,
+        urgentBlockedCountsTowardLock: false,
+      };
+
+      if (!employee) {
+        return res.json(DEFAULTS);
+      }
+
+      // Department-specific config takes priority over the org-wide default.
+      let config = null;
+      if (employee.department) {
+        const rows = await db
+          .select()
+          .from(enforcementConfigs)
+          .where(
+            and(
+              eq(enforcementConfigs.organisationId, employee.organisationId ?? ""),
+              eq(enforcementConfigs.department, employee.department)
+            )
+          )
+          .limit(1);
+        config = rows[0] ?? null;
+      }
+
+      if (!config) {
+        const rows = await db
+          .select()
+          .from(enforcementConfigs)
+          .where(
+            and(
+              eq(enforcementConfigs.organisationId, employee.organisationId ?? ""),
+              isNull(enforcementConfigs.department)
+            )
+          )
+          .limit(1);
+        config = rows[0] ?? null;
+      }
+
+      if (!config) {
+        return res.json(DEFAULTS);
+      }
+
+      res.json({
+        gracePeriodSeconds: config.gracePeriodSeconds,
+        warningIntervalSeconds: config.warningIntervalSeconds,
+        warningCount: config.warningCount,
+        lockEnabled: config.lockEnabled,
+        urgentBlockedCountsTowardLock: config.urgentBlockedCountsTowardLock,
+      });
+    } catch (error) {
+      console.error("Get enforcement config error:", error);
+      // Fail safe: never block the agent's poll loop on a config error.
+      res.json({
+        gracePeriodSeconds: 300,
+        warningIntervalSeconds: 300,
+        warningCount: 3,
+        lockEnabled: true,
+        urgentBlockedCountsTowardLock: false,
+      });
+    }
+  });
+
+  // Admin-facing: create/update the enforcement config for an org or a
+  // specific department within it. Pass department: null for the org default.
+  app.post("/api/settings/enforcement-config", async (req, res) => {
+    try {
+      const {
+        organisationId,
+        department,
+        gracePeriodSeconds,
+        warningIntervalSeconds,
+        warningCount,
+        lockEnabled,
+        urgentBlockedCountsTowardLock,
+      } = req.body;
+
+      if (!organisationId) {
+        return res.status(400).json({ error: "organisationId is required" });
+      }
+
+      const whereClause = department
+        ? and(eq(enforcementConfigs.organisationId, organisationId), eq(enforcementConfigs.department, department))
+        : and(eq(enforcementConfigs.organisationId, organisationId), isNull(enforcementConfigs.department));
+
+      const existing = await db.select().from(enforcementConfigs).where(whereClause).limit(1);
+
+      if (existing[0]) {
+        const [updated] = await db
+          .update(enforcementConfigs)
+          .set({
+            gracePeriodSeconds: gracePeriodSeconds ?? existing[0].gracePeriodSeconds,
+            warningIntervalSeconds: warningIntervalSeconds ?? existing[0].warningIntervalSeconds,
+            warningCount: warningCount ?? existing[0].warningCount,
+            lockEnabled: lockEnabled ?? existing[0].lockEnabled,
+            urgentBlockedCountsTowardLock: urgentBlockedCountsTowardLock ?? existing[0].urgentBlockedCountsTowardLock,
+            updatedAt: new Date(),
+          })
+          .where(eq(enforcementConfigs.id, existing[0].id))
+          .returning();
+        return res.json(updated);
+      }
+
+      const [created] = await db
+        .insert(enforcementConfigs)
+        .values({
+          organisationId,
+          department: department ?? null,
+          gracePeriodSeconds: gracePeriodSeconds ?? 300,
+          warningIntervalSeconds: warningIntervalSeconds ?? 300,
+          warningCount: warningCount ?? 3,
+          lockEnabled: lockEnabled ?? true,
+          urgentBlockedCountsTowardLock: urgentBlockedCountsTowardLock ?? false,
+        })
+        .returning();
+      res.json(created);
+    } catch (error) {
+      console.error("Save enforcement config error:", error);
+      res.status(500).json({ error: "Failed to save enforcement config" });
+    }
+  });
+
+  // ============ STEP 6 — WARNING RESPONSE AUDIT TRAIL ============
+  app.post("/api/timeguard/warning-response", async (req, res) => {
+    try {
+      const { employeeCode, warningNumber, response, reason } = req.body;
+      if (!employeeCode || !warningNumber || !response) {
+        return res.status(400).json({ error: "employeeCode, warningNumber, and response are required" });
+      }
+      const [log] = await db
+        .insert(deviationWarningLogs)
+        .values({ employeeCode, warningNumber, response, reason: reason ?? null })
+        .returning();
+      res.json(log);
+    } catch (error) {
+      console.error("Log warning response error:", error);
+      res.status(500).json({ error: "Failed to log warning response" });
+    }
+  });
+
+  // ============ STEP 6 — ADMIN OVERRIDE ============
+  // Admin/manager-facing: create an override that will clear a locked
+  // employee's TimeGuard lock. The agent polls for this while locked.
+  app.post("/api/timeguard/admin-override", async (req, res) => {
+    try {
+      const { employeeCode, adminId, reason } = req.body;
+      if (!employeeCode || !adminId || !reason) {
+        return res.status(400).json({ error: "employeeCode, adminId, and reason are required" });
+      }
+      const [override] = await db
+        .insert(deviationOverrides)
+        .values({ employeeCode, adminId, reason })
+        .returning();
+      res.json(override);
+    } catch (error) {
+      console.error("Create admin override error:", error);
+      res.status(500).json({ error: "Failed to create admin override" });
+    }
+  });
+
+  // Agent-facing: check for (and consume) an unconsumed override for this
+  // employee. Returns { override: null } if none is pending.
+  app.post("/api/timeguard/check-override", async (req, res) => {
+    try {
+      const { employeeCode } = req.body;
+      if (!employeeCode) {
+        return res.status(400).json({ error: "employeeCode is required" });
+      }
+      const rows = await db
+        .select()
+        .from(deviationOverrides)
+        .where(and(eq(deviationOverrides.employeeCode, employeeCode), isNull(deviationOverrides.consumedAt)))
+        .limit(1);
+
+      const pending = rows[0];
+      if (!pending) {
+        return res.json({ override: null });
+      }
+
+      const [consumed] = await db
+        .update(deviationOverrides)
+        .set({ consumedAt: new Date() })
+        .where(eq(deviationOverrides.id, pending.id))
+        .returning();
+
+      res.json({ override: consumed });
+    } catch (error) {
+      console.error("Check override error:", error);
+      res.status(500).json({ error: "Failed to check override" });
     }
   });
 
@@ -2790,9 +3066,14 @@ export async function registerRoutes(
         };
         const todayKey = getISTTodayKey();
 
-        for (const project of projects) {
-          const projectTasks = await getTasks(project.project_code, userDept, employee.employeeCode, employee.role);
-          const mandatoryTasks = projectTasks.filter(t => shouldSyncPMSTask(t, todayKey));
+        // Fetch all project tasks in parallel instead of sequentially
+        const allProjectTasks = await Promise.all(
+          projects.map((project: any) =>
+            getTasks(project.project_code, userDept, employee.employeeCode, employee.role)
+          )
+        );
+        for (const projectTasks of allProjectTasks) {
+          const mandatoryTasks = projectTasks.filter((t: any) => shouldSyncPMSTask(t, todayKey));
           for (const mt of mandatoryTasks) {
             const isIncluded = selectedTasks.some((st: any) => st.id === mt.id);
             if (!isIncluded) {
@@ -2824,8 +3105,10 @@ export async function registerRoutes(
       const existingEntries = await storage.getTimeEntriesByEmployee(employeeId);
       const todayEntries = existingEntries.filter((e: any) => e.date === planDate);
 
-      // Save selected tasks
-      for (const t of selectedTasks) {
+      // Save all selected tasks in parallel — createPlanTask + createTimeEntry
+      // are batched with Promise.all so the 20+ DB round-trips run concurrently
+      // instead of sequentially, reducing total wait time to ~1 round-trip.
+      await Promise.all(selectedTasks.map(async (t: any) => {
         // Tool the employee expects to use for this planned task, selected via
         // the Plan for the Day's "Tool Selection" field. Falls back to
         // scheduleData.tool in case the client only nested it there.
@@ -2869,7 +3152,6 @@ export async function registerRoutes(
           const tSubtaskName = t.scheduleData?.subtaskName || t.subtaskName || null;
           const entryDescription = tSubtaskName ? `${t.task_name} | ${tSubtaskName}` : t.task_name;
 
-          // Allow breaks to be inserted as well. 
           // Check if we already created a time entry for this task (and, if picked, subtask)
           // on this date with the exact same time block.
           const alreadyExists = todayEntries.some((e: any) => {
@@ -2899,109 +3181,106 @@ export async function registerRoutes(
               pmsSubtaskId: tSubtaskId,
               status: 'draft'
             });
-            todayEntries.push({
-              date: planDate,
-              pmsId: t.id && !t.id.startsWith('planned-') && !t.id.startsWith('break-') ? t.id : null,
-              pmsSubtaskId: tSubtaskId,
-              taskDescription: entryDescription,
-              startTime: tStart,
-              endTime: tEnd
-            } as any);
           }
         }
-      }
+      }));
 
-      // Mirror the submitted plan into PMS's shared calendar_events table so
-      // it shows up immediately in both Timestrap's and PMS's calendar views.
-      // calendar_events is the single source of truth for both calendars, so
-      // EVERY scheduled plan entry needs a row here — including built-in
-      // breaks ("break-*") and ad-hoc tasks ("planned-*") that don't map to a
-      // real PMS task id. upsertPlanCalendarEvent/toTaskUuid already derive a
-      // stable pseudo-UUID for those non-UUID ids, so they're safe to sync
-      // the same way as real PMS tasks.
-      // Best-effort: a failure here shouldn't block the plan submission itself.
-      if (employee?.employeeCode) {
-        console.log(`[SYNC] Starting plan sync for employee ${employee.employeeCode} with ${selectedTasks.length} tasks.`);
-        for (const t of selectedTasks) {
-          const tStart = t.scheduleData?.startTime || t.startTime || null;
-          const tEnd = t.scheduleData?.endTime || t.endTime || null;
-          if (!tStart || !tEnd) {
-            console.log(`[SYNC] Skipping task ${t.id} due to missing time slot.`);
-            continue; // skip tasks without a scheduled time slot
-          }
-          if (!t.id) {
-            console.log(`[SYNC] Skipping task due to missing id.`);
-            continue; // need some stable id to key the calendar row on
-          }
-
-          try {
-            console.log(`[SYNC] Calling upsertPmsPlanCalendarEvent for task ${t.id} (${tStart}-${tEnd}).`);
-            const syncedEvent = await upsertPmsPlanCalendarEvent(employee.employeeCode, {
-              taskId: t.id,
-              title: t.task_name || (t.id.startsWith('break-') ? 'Break' : 'Task'),
-              project: t.projectName || t.project_code,
-              date: planDate,
-              startTime: tStart,
-              endTime: tEnd,
-            }, { matchBySlot: true });
-            console.log(`[SYNC] Successfully synced task ${t.id}. Event ID: ${syncedEvent?.id}`);
-          } catch (pmsSyncError) {
-            console.error(`[SYNC ERROR] Failed to sync plan task ${t.id} to PMS calendar:`, pmsSyncError);
-          }
-        }
-      } else {
-        console.warn(`[SYNC WARNING] No employee code found for ${employeeId}.`);
-      }
-
-      // Save unselected tasks as postponements
-      for (const t of unselectedTasks) {
-        await pool.query(
-          `INSERT INTO task_postponements (task_id, task_name, reason, previous_due_date, new_due_date, postponed_by, postponed_at) 
-             VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-          [t.taskId, t.taskName, t.reason, null, t.newDueDate, employeeId]
-        );
+      // Save unselected tasks as postponements — also in parallel
+      if (unselectedTasks && unselectedTasks.length > 0) {
+        await Promise.all(unselectedTasks.map((t: any) =>
+          pool.query(
+            `INSERT INTO task_postponements (task_id, task_name, reason, previous_due_date, new_due_date, postponed_by, postponed_at)
+               VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+            [t.taskId, t.taskName, t.reason, null, t.newDueDate, employeeId]
+          )
+        ));
       }
 
       broadcast("daily_plan_submitted", { plan, employeeId });
 
-      // Sort tasks chronologically for email
-      const sortedTasksForEmail = [...selectedTasks].sort((a, b) => {
-        const aStart = a.scheduleData?.startTime || a.startTime || "00:00";
-        const bStart = b.scheduleData?.startTime || b.startTime || "00:00";
-        return aStart.localeCompare(bStart);
-      });
+      // ✅ Respond immediately — the client gets instant confirmation.
+      // All remaining work (PMS calendar sync, emails) runs fire-and-forget
+      // in the background so it never blocks the 201 response.
+      res.status(201).json(plan);
 
-      // Email notification
-      try {
-        const { sendDailyPlanSubmittedEmail, sendDailyPlanConfirmationEmail } = await import('./email');
-        const emp = await storage.getEmployee(employeeId);
+      // Mirror the submitted plan into PMS's shared calendar_events table so
+      // it shows up immediately in both Timestrap's and PMS's calendar views.
+      // Best-effort / fire-and-forget: runs in the background so it NEVER
+      // blocks or delays the plan submission response (prevents 504 timeouts
+      // for test employees or when PMS DB is slow/unreachable).
+      if (employee?.employeeCode) {
+        const _empCode = employee.employeeCode;
+        const _tasks = [...selectedTasks];
+        const _planDate = planDate;
+        (async () => {
+          console.log(`[SYNC] Starting plan sync for employee ${_empCode} with ${_tasks.length} tasks.`);
+          for (const t of _tasks) {
+            const tStart = t.scheduleData?.startTime || t.startTime || null;
+            const tEnd = t.scheduleData?.endTime || t.endTime || null;
+            if (!tStart || !tEnd) {
+              console.log(`[SYNC] Skipping task ${t.id} due to missing time slot.`);
+              continue; // skip tasks without a scheduled time slot
+            }
+            if (!t.id) {
+              console.log(`[SYNC] Skipping task due to missing id.`);
+              continue; // need some stable id to key the calendar row on
+            }
 
-        if (emp) {
-          // 1. Send to Admin/HR (Existing)
-          await sendDailyPlanSubmittedEmail({
-            employeeName: emp.name,
-            employeeCode: emp.employeeCode,
-            selectedTasks: sortedTasksForEmail,
-            unselectedTasks: unselectedTasks || []
-          });
-
-          // 2. Send confirmation to employee (New)
-          if (emp.email) {
-            await sendDailyPlanConfirmationEmail({
-              employeeName: emp.name,
-              employeeCode: emp.employeeCode,
-              employeeEmail: emp.email,
-              date: planDate,
-              selectedTasks: sortedTasksForEmail,
-              unselectedTasks: unselectedTasks || []
-            });
+            try {
+              console.log(`[SYNC] Calling upsertPmsPlanCalendarEvent for task ${t.id} (${tStart}-${tEnd}).`);
+              const syncedEvent = await upsertPmsPlanCalendarEvent(_empCode, {
+                taskId: t.id,
+                title: t.task_name || (t.id.startsWith('break-') ? 'Break' : 'Task'),
+                project: t.projectName || t.project_code,
+                date: _planDate,
+                startTime: tStart,
+                endTime: tEnd,
+              }, { matchBySlot: true });
+              console.log(`[SYNC] Successfully synced task ${t.id}. Event ID: ${syncedEvent?.id}`);
+            } catch (pmsSyncError) {
+              console.error(`[SYNC ERROR] Failed to sync plan task ${t.id} to PMS calendar:`, pmsSyncError);
+            }
           }
-        }
-      } catch (emailErr) {
-        console.error('[EMAIL] Daily plan notification failed:', emailErr);
+        })().catch((err) => console.error('[SYNC] Unexpected error in background PMS sync:', err));
+      } else {
+        console.warn(`[SYNC WARNING] No employee code found for ${employeeId}.`);
       }
 
-      res.status(201).json(plan);
+      // Fire-and-forget: send email notifications in the background.
+      // The client already received the 201 response above; emails must
+      // never block or delay the submission confirmation.
+      (async () => {
+        try {
+          const sortedTasksForEmail = [...selectedTasks].sort((a: any, b: any) => {
+            const aStart = a.scheduleData?.startTime || a.startTime || "00:00";
+            const bStart = b.scheduleData?.startTime || b.startTime || "00:00";
+            return aStart.localeCompare(bStart);
+          });
+          const { sendDailyPlanSubmittedEmail, sendDailyPlanConfirmationEmail } = await import('./email');
+          const emp = await storage.getEmployee(employeeId);
+          if (emp) {
+            // Send to Admin/HR and employee confirmation in parallel
+            await Promise.all([
+              sendDailyPlanSubmittedEmail({
+                employeeName: emp.name,
+                employeeCode: emp.employeeCode,
+                selectedTasks: sortedTasksForEmail,
+                unselectedTasks: unselectedTasks || []
+              }),
+              emp.email ? sendDailyPlanConfirmationEmail({
+                employeeName: emp.name,
+                employeeCode: emp.employeeCode,
+                employeeEmail: emp.email,
+                date: planDate,
+                selectedTasks: sortedTasksForEmail,
+                unselectedTasks: unselectedTasks || []
+              }) : Promise.resolve(),
+            ]);
+          }
+        } catch (emailErr) {
+          console.error('[EMAIL] Daily plan notification failed:', emailErr);
+        }
+      })().catch((err) => console.error('[EMAIL] Unexpected error in background email:', err));
     } catch (error) {
       console.error("Create daily plan error:", error);
       res.status(500).json({ error: "Failed to create daily plan" });
