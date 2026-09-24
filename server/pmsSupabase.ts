@@ -286,7 +286,7 @@ export const getTasks = async (projectId?: string, userDepartment?: string, user
           )
         ORDER BY pt.task_name
       `;
-      params.push(projectId, userEmpCode || null, isAdmin);
+      params.push(projectId, userEmpCode || null);
     } else if (userEmpCode && !isAdmin) {
       query = `
         SELECT DISTINCT pt.*
