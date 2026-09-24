@@ -183,7 +183,20 @@ export async function registerRoutes(
   // Reports static folder
   const reportsDir = path.join(process.cwd(), "reports");
   if (!fsSync.existsSync(reportsDir)) fsSync.mkdirSync(reportsDir, { recursive: true });
-  app.use("/reports", express.static(reportsDir));
+  app.use("/reports", (req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    next();
+  }, express.static(reportsDir, {
+    setHeaders: (res, filePath) => {
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === ".pdf") {
+        res.setHeader("Content-Type", "application/pdf");
+      } else if (ext === ".xlsx") {
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      }
+      res.setHeader("Content-Disposition", `attachment; filename="${path.basename(filePath)}"`);
+    }
+  }));
 
   // Initialize WebSocket server for real-time updates
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });

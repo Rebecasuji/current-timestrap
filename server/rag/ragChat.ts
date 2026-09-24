@@ -3408,7 +3408,10 @@ ${instructions}`;
                 fileName = await generateProjectTaskBreakdownReport(projectCode, format);
               }
 
-              const downloadUrl = `${userContext.baseUrl || process.env.APP_BASE_URL || "http://localhost:5003"}/reports/${fileName}`;
+              const rawBaseUrl = userContext.baseUrl || process.env.APP_BASE_URL;
+              const downloadUrl = rawBaseUrl
+                ? `${rawBaseUrl.replace(/\/$/, "")}/reports/${fileName}`
+                : `/reports/${fileName}`;
 
               toolResult = {
                 success: true,

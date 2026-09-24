@@ -51,6 +51,7 @@ export interface PMSTask {
   task_members?: string[];
   created_at?: string;
   assigner_id?: string;
+  task_owner_id?: string;
   updated_at?: string;
   progress?: number;
   schedule_type?: string;
@@ -276,18 +277,27 @@ export const getTasks = async (projectId?: string, userDepartment?: string, user
         INNER JOIN projects p ON pt.project_id = p.id
         LEFT JOIN task_members tm ON pt.id = tm.task_id
         LEFT JOIN employees e ON tm.employee_id = e.id
+        LEFT JOIN employees task_owner_employee ON task_owner_employee.id = pt.task_owner_id
         WHERE p.project_code = $1
           AND (pt.status IS NULL OR LOWER(pt.status) != 'completed')
-          AND (LOWER(TRIM(e.emp_code)) = LOWER(TRIM($2)) OR $2 IS NULL OR $3 = TRUE OR tm.task_id IS NULL)
+          AND (
+            LOWER(TRIM(COALESCE(e.emp_code, ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(COALESCE(task_owner_employee.emp_code, ''))) = LOWER(TRIM($2))
+          )
         ORDER BY pt.task_name
       `;
       params.push(projectId, userEmpCode || null, isAdmin);
     } else if (userEmpCode && !isAdmin) {
       query = `
-        SELECT DISTINCT pt.* FROM project_tasks pt
-        INNER JOIN task_members tm ON pt.id = tm.task_id
-        INNER JOIN employees e ON tm.employee_id = e.id
-        WHERE LOWER(TRIM(e.emp_code)) = LOWER(TRIM($1))
+        SELECT DISTINCT pt.*
+        FROM project_tasks pt
+        LEFT JOIN task_members tm ON pt.id = tm.task_id
+        LEFT JOIN employees e ON tm.employee_id = e.id
+        LEFT JOIN employees task_owner_employee ON task_owner_employee.id = pt.task_owner_id
+        WHERE (
+          LOWER(TRIM(COALESCE(e.emp_code, ''))) = LOWER(TRIM($1))
+          OR LOWER(TRIM(COALESCE(task_owner_employee.emp_code, ''))) = LOWER(TRIM($1))
+        )
           AND (pt.status IS NULL OR LOWER(pt.status) != 'completed')
         ORDER BY pt.task_name
       `;
@@ -332,31 +342,40 @@ export const getDepartmentTasks = async (userDepartment: string, userEmpCode: st
     let query: string;
     let queryParams: any[];
     if (myTasksOnly) {
-      // Only two placeholders needed: projectIds ($1) and userEmpCode ($2)
+      // Employees should only see tasks where they are a task member or owner.
       query = `
         SELECT DISTINCT pt.*, pt.schedule_type, pt.schedule_data FROM project_tasks pt
         INNER JOIN projects p ON pt.project_id = p.id
         LEFT JOIN task_members tm ON pt.id = tm.task_id
         LEFT JOIN employees e ON tm.employee_id = e.id
+        LEFT JOIN employees task_owner_employee ON task_owner_employee.id = pt.task_owner_id
         WHERE pt.project_id = ANY($1)
           AND (pt.status IS NULL OR LOWER(pt.status) != 'completed')
-          AND LOWER(TRIM(e.emp_code)) = LOWER(TRIM($2))
+          AND (
+            LOWER(TRIM(COALESCE(e.emp_code, ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(COALESCE(task_owner_employee.emp_code, ''))) = LOWER(TRIM($2))
+          )
         ORDER BY pt.task_name
       `;
       queryParams = [projectIds, userEmpCode || null];
     } else {
-      // Original three-placeholder clause (unchanged behavior)
+      // Default employee plan view should also stay strict and exclude unassigned department tasks.
+      // Managers/admins still have their own broader views via explicit role checks elsewhere.
       query = `
         SELECT DISTINCT pt.*, pt.schedule_type, pt.schedule_data FROM project_tasks pt
         INNER JOIN projects p ON pt.project_id = p.id
         LEFT JOIN task_members tm ON pt.id = tm.task_id
         LEFT JOIN employees e ON tm.employee_id = e.id
+        LEFT JOIN employees task_owner_employee ON task_owner_employee.id = pt.task_owner_id
         WHERE pt.project_id = ANY($1)
           AND (pt.status IS NULL OR LOWER(pt.status) != 'completed')
-          AND (LOWER(TRIM(e.emp_code)) = LOWER(TRIM($2)) OR $2 IS NULL OR $3 = TRUE OR tm.task_id IS NULL)
+          AND (
+            LOWER(TRIM(COALESCE(e.emp_code, ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(COALESCE(task_owner_employee.emp_code, ''))) = LOWER(TRIM($2))
+          )
         ORDER BY pt.task_name
       `;
-      queryParams = [projectIds, userEmpCode || null, isAdmin];
+      queryParams = [projectIds, userEmpCode || null];
     }
 
     const result: QueryResult = await pmsPool.query(query, queryParams);
@@ -388,11 +407,15 @@ export const getTasksByProject = async (projectId: string, userDepartment?: stri
        INNER JOIN projects p ON pt.project_id = p.id
        LEFT JOIN task_members tm ON pt.id = tm.task_id
        LEFT JOIN employees e ON tm.employee_id = e.id
+       LEFT JOIN employees task_owner_employee ON task_owner_employee.id = pt.task_owner_id
        WHERE p.project_code = $1
          AND (pt.status IS NULL OR LOWER(pt.status) != 'completed')
-         AND (LOWER(TRIM(e.emp_code)) = LOWER(TRIM($2)) OR $2 IS NULL OR $3 = TRUE OR tm.task_id IS NULL)
+         AND (
+           LOWER(TRIM(COALESCE(e.emp_code, ''))) = LOWER(TRIM($2))
+           OR LOWER(TRIM(COALESCE(task_owner_employee.emp_code, ''))) = LOWER(TRIM($2))
+         )
        ORDER BY pt.task_name`,
-      [projectId, userEmpCode || null, isAdmin]
+      [projectId, userEmpCode || null]
     );
 
     let tasks = result.rows as PMSTask[] || [];

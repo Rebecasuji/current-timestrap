@@ -11,7 +11,7 @@ import PDFDocument from "pdfkit";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || "Time Strap <noreply@resend.dev>";
-const SENDER_EMAILS = process.env.SENDER_EMAIL || "pushpa.p@ctint.in,sp@ctint.in";
+const SENDER_EMAILS = process.env.SENDER_EMAIL || "tharakesh@ctint.in,sp@ctint.in,rebeca@ctint.in";
 
 console.log("[EMAIL CONFIG] RESEND_API_KEY:", RESEND_API_KEY ? "✓ Present" : "✗ Missing");
 console.log("[EMAIL CONFIG] FROM_EMAIL:", FROM_EMAIL);
