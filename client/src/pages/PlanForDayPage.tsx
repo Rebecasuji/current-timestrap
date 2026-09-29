@@ -123,19 +123,50 @@ export default function PlanForDayPage() {
     return Math.max(minDuration, Math.min(maxDuration, calculatedDuration));
   };
 
-  const buildScheduledTasks = (tasks: any[]) => {
-    const startOfDay = 9 * 60;
-    const endOfDay = 17 * 60;
-    let cursor = startOfDay;
+  const getPlanningAnchorMinutes = () => {
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const earliestAllowed = 6 * 60;
+    const latestAllowed = 23 * 60;
+    return Math.min(Math.max(currentMinutes, earliestAllowed), latestAllowed);
+  };
 
-    return tasks.map((task, index) => {
+  const getDefaultPlanDuration = () => 30;
+
+  const buildScheduledTasks = (tasks: any[]) => {
+    const anchorMinutes = getPlanningAnchorMinutes();
+    const endOfDay = 23 * 60;
+
+    const orderedTasks = [...tasks].sort((a, b) => {
+      const aIsBreak = !!a.isBreak || a.id?.startsWith('break-');
+      const bIsBreak = !!b.isBreak || b.id?.startsWith('break-');
+      if (aIsBreak !== bIsBreak) return aIsBreak ? 1 : -1;
+
+      const aStart = toMinutes(a.scheduleData?.startTime || a.startTime || '23:59');
+      const bStart = toMinutes(b.scheduleData?.startTime || b.startTime || '23:59');
+      return aStart - bStart;
+    });
+
+    let cursor = anchorMinutes;
+
+    return orderedTasks.map((task, index) => {
       const scheduleData = typeof task.scheduleData === 'object' && task.scheduleData ? task.scheduleData : {};
-      const baseDuration = scheduleData.durationMinutes || task.durationMinutes || 30;
-      const startTime = scheduleData.startTime || task.startTime || toTime(cursor);
+      const baseDuration = scheduleData.durationMinutes ?? task.durationMinutes ?? getDefaultPlanDuration();
+      const explicitStart = scheduleData.startTime || task.startTime;
+      const explicitStartMinutes = explicitStart ? toMinutes(explicitStart) : null;
+      const shouldKeepExplicitStart = explicitStartMinutes !== null && explicitStartMinutes >= anchorMinutes - 30 && explicitStartMinutes <= endOfDay;
+      const startTime = shouldKeepExplicitStart ? explicitStart : toTime(cursor);
       const startMin = toMinutes(startTime);
-      const endTime = scheduleData.endTime || task.endTime || toTime(startMin + baseDuration);
+
+      let endTime = scheduleData.endTime || task.endTime || toTime(startMin + baseDuration);
       const durationMinutes = durationForRange(startTime, endTime, task.id);
-      cursor = Math.max(startMin + durationMinutes, toMinutes(endTime));
+      const finalEndMinutes = startMin + durationMinutes;
+      endTime = toTime(finalEndMinutes);
+      cursor = Math.max(finalEndMinutes, toMinutes(endTime));
+
+      if (cursor > endOfDay) {
+        cursor = endOfDay;
+      }
 
       return {
         ...task,
@@ -315,6 +346,26 @@ export default function PlanForDayPage() {
     },
   });
 
+  const { data: lmsHoursData } = useQuery<{ leaveHours: number; permissionHours: number; totalLMSHours: number }>({
+    queryKey: ['/api/lms/hours', user?.employeeCode, today],
+    enabled: !!user?.employeeCode,
+    queryFn: async () => {
+      const res = await fetch(`/api/lms/hours?employeeCode=${user?.employeeCode}&date=${today}`);
+      if (!res.ok) return { leaveHours: 0, permissionHours: 0, totalLMSHours: 0 };
+      return res.json();
+    },
+  });
+
+  const { data: leaveStatusData } = useQuery<{ hasLeave: boolean; status: string | null; message?: string }>({
+    queryKey: ['/api/employee/leave-status', user?.employeeCode, today],
+    enabled: !!user?.employeeCode,
+    queryFn: async () => {
+      const res = await fetch(`/api/employee/leave-status?employeeCode=${user?.employeeCode}&date=${today}`);
+      if (!res.ok) return { hasLeave: false, status: null };
+      return res.json();
+    },
+  });
+
   const { data: historyData, isLoading: isLoadingHistory } = useQuery({
     queryKey: ['/api/daily-plans', historyDate, user?.id],
     enabled: !!user?.id && !!historyDate,
@@ -436,6 +487,7 @@ export default function PlanForDayPage() {
 
     if (!planStatus?.submitted && selectedTasks.length === 0) {
       const autoTasks = availableTasks.filter((task: any) => task.isAutoSelected);
+      const nowMinutes = getPlanningAnchorMinutes();
       const breaks = [
         {
           id: 'break-morning',
@@ -464,12 +516,24 @@ export default function PlanForDayPage() {
           startTime: '17:00',
           endTime: '17:15'
         }
-      ];
+      ].filter((breakItem) => {
+        const start = toMinutes(breakItem.startTime);
+        return start >= nowMinutes - 30;
+      });
       if (autoTasks.length > 0 || breaks.length > 0) {
-        setSelectedTasks(buildScheduledTasks([...breaks, ...autoTasks]));
+        setSelectedTasks(buildScheduledTasks([...autoTasks, ...breaks]));
       }
     }
   }, [availableTasks, planStatus, selectedTasks.length]);
+
+  const { data: settings = {} } = useQuery({
+    queryKey: ['/api/settings'],
+    queryFn: async () => {
+      const res = await fetch('/api/settings');
+      if (!res.ok) throw new Error('Failed to fetch settings');
+      return res.json();
+    },
+  });
 
   const toggleWindowMutation = useMutation({
     mutationFn: async (open: boolean) => {
@@ -483,6 +547,37 @@ export default function PlanForDayPage() {
         description: data.planWindowOpen ? 'Employees can submit plans.' : 'Submission restricted.',
       });
     },
+  });
+
+  const toggleLatePlanOverrideMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await fetch('/api/settings/late-plan-override', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: user?.id, enabled })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || 'Failed to update late plan override');
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      toast({
+        title: data?.settings?.allowLatePlanSubmission ? '⚠️ Late Plan Override Enabled' : 'Late Plan Override Disabled',
+        description: data?.settings?.allowLatePlanSubmission
+          ? 'Employees can now submit the daily plan even after the cutoff.'
+          : 'The normal daily-plan cutoff is back in force.'
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Update Failed',
+        description: error?.message || 'Could not update the late plan override.',
+        variant: 'destructive'
+      });
+    }
   });
 
   const sendReminderMutation = useMutation({
@@ -575,8 +670,11 @@ export default function PlanForDayPage() {
     return Math.max(0, odEnd - odStart);
   })();
 
-  const requiredMinutes = Math.max(0, STANDARD_DAY_MINUTES - odOverlapMinutes);
+  const approvedLmsMinutes = Math.round((lmsHoursData?.totalLMSHours || 0) * 60);
+  const reducedByApprovedHours = Math.min(approvedLmsMinutes, STANDARD_DAY_MINUTES);
+  const requiredMinutes = Math.max(0, STANDARD_DAY_MINUTES - odOverlapMinutes - reducedByApprovedHours);
   const isValidPlan = totalWorkingMinutes >= requiredMinutes && timingErrors.length === 0;
+  const isOnLeaveToday = !!leaveStatusData?.hasLeave;
 
   if (isLoadingPlan || isLoadingTasks) {
     return (
@@ -667,6 +765,11 @@ export default function PlanForDayPage() {
   };
 
   const submitPlan = () => {
+    if (isOnLeaveToday) {
+      toast({ title: 'Leave in effect', description: 'You are on leave today, so the plan for this day is blocked.', variant: 'destructive' });
+      return;
+    }
+
     if (!isWindowOpen) {
       toast({ title: 'Submission Blocked', description: 'The plan window is closed.', variant: 'destructive' });
       return;
@@ -810,9 +913,14 @@ export default function PlanForDayPage() {
           )}
 
           {isController && (
-            <Button onClick={() => toggleWindowMutation.mutate(!isWindowOpen)} size="sm" className={`rounded-xl font-black text-xs px-4 py-5 ${isWindowOpen ? 'bg-red-600/80' : 'bg-green-600'}`}>
-              {isWindowOpen ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-            </Button>
+            <>
+              <Button onClick={() => toggleLatePlanOverrideMutation.mutate(!Boolean(settings?.allowLatePlanSubmission))} size="sm" className={`rounded-xl font-black text-xs px-4 py-5 ${settings?.allowLatePlanSubmission ? 'bg-amber-600' : 'bg-slate-700'}`}>
+                {settings?.allowLatePlanSubmission ? 'LATE PLAN ON' : 'LATE PLAN OFF'}
+              </Button>
+              <Button onClick={() => toggleWindowMutation.mutate(!isWindowOpen)} size="sm" className={`rounded-xl font-black text-xs px-4 py-5 ${isWindowOpen ? 'bg-red-600/80' : 'bg-green-600'}`}>
+                {isWindowOpen ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+              </Button>
+            </>
           )}
         </div>
       </header>
@@ -829,6 +937,19 @@ export default function PlanForDayPage() {
               <Button onClick={() => setLocation('/tracker')} className="px-8 bg-blue-600">Go to Tracker</Button>
               <Button onClick={() => setActiveTab('history')} variant="outline" className="px-8">View Plan</Button>
             </div>
+          </div>
+        </div>
+      ) : isOnLeaveToday ? (
+        <div className="flex flex-col h-[calc(100vh-250px)] items-center justify-center p-8 text-center">
+          <div className="bg-slate-900/50 p-12 rounded-3xl border border-amber-500/30 max-w-lg w-full">
+            <CalendarIcon className="w-12 h-12 text-amber-400 mx-auto mb-8" />
+            <h1 className="text-3xl font-extrabold mb-4">Leave Applied for Today</h1>
+            <p className="text-slate-300 mb-8">
+              {leaveStatusData?.status === 'Pending'
+                ? 'You have a pending leave request for today, so the plan for this day is blocked.'
+                : 'You are on leave today, so the plan for this day is blocked.'}
+            </p>
+            <Button onClick={() => setLocation('/tracker')} className="px-8 bg-slate-700">Go to Tracker</Button>
           </div>
         </div>
       ) : isWindowClosedNotSubmitted ? (

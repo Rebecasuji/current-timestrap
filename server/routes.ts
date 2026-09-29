@@ -102,6 +102,42 @@ function isAfterPlanCutoff(cutoffMinutesOverride?: number): boolean {
   return nowMinutes >= cutoffMinutes;
 }
 
+async function getLeaveStatusForDate(employeeCode: string, date: string) {
+  if (!employeeCode || !date) {
+    return { hasLeave: false, status: null, details: [] as any[] };
+  }
+
+  try {
+    const { lmsPool } = await import('./lmsSupabase');
+    const result = await lmsPool.query(`
+      SELECT id, user_id, leave_type, leave_duration_type, status, start_date, end_date
+      FROM leaves
+      WHERE user_id = $1
+        AND status IN ('Approved', 'Pending')
+        AND start_date <= $2::date
+        AND end_date >= $2::date
+      ORDER BY CASE status WHEN 'Pending' THEN 0 WHEN 'Approved' THEN 1 END ASC
+    `, [employeeCode, date]);
+
+    if (!result.rows?.length) {
+      return { hasLeave: false, status: null, details: [] as any[] };
+    }
+
+    const primaryStatus = result.rows.some((row: any) => row.status === 'Pending')
+      ? 'Pending'
+      : 'Approved';
+
+    return {
+      hasLeave: true,
+      status: primaryStatus,
+      details: result.rows,
+    };
+  } catch (error) {
+    console.error('[LEAVE STATUS] Error checking leave status:', error);
+    return { hasLeave: false, status: null, details: [] as any[] };
+  }
+}
+
 // Batch enrich entries to avoid N+1 query problem
 async function batchEnrichEntries(entries: any[]) {
   if (entries.length === 0) return [];
@@ -1262,6 +1298,21 @@ export async function registerRoutes(
     }
   });
 
+  app.get('/api/employee/leave-status', async (req, res) => {
+    try {
+      const { employeeCode, date } = req.query;
+      if (!employeeCode || !date) {
+        return res.status(400).json({ error: 'employeeCode and date are required' });
+      }
+
+      const status = await getLeaveStatusForDate(String(employeeCode), String(date));
+      res.json(status);
+    } catch (error) {
+      console.error('[LEAVE STATUS] Failed to fetch leave status:', error);
+      res.status(500).json({ error: 'Failed to fetch leave status' });
+    }
+  });
+
   // ============ TIME ENTRY ROUTES ============
 
   // Approvals page feed: excludes 'draft' entries (created only when an employee submits
@@ -1384,6 +1435,19 @@ export async function registerRoutes(
       } catch (toolValidationError) {
         // Fail open: don't block a legitimate submission over a validation-check bug.
         console.error("[TOOL-USAGE-VALIDATION] Error checking tool usage:", toolValidationError);
+      }
+
+      const employee = await storage.getEmployee(entryData.employeeId);
+      const leaveStatus = employee?.employeeCode
+        ? await getLeaveStatusForDate(employee.employeeCode, entryData.date)
+        : { hasLeave: false, status: null, details: [] };
+
+      if (leaveStatus.hasLeave) {
+        const detail = leaveStatus.status === 'Pending' ? 'pending leave' : 'approved leave';
+        return res.status(403).json({
+          error: `You are on ${detail} today. Please do not submit a timesheet for this date.`,
+          message: `You are on ${detail} today. Please do not submit a timesheet for this date.`
+        });
       }
 
       // Plan for the Day Check (Only for today or future dates)
@@ -3020,8 +3084,21 @@ export async function registerRoutes(
       const todayString = istNowForPlan.toISOString().split('T')[0];
       const planDate = date || todayString;
 
+      const employee = await storage.getEmployee(employeeId);
+      if (employee?.employeeCode) {
+        const leaveStatus = await getLeaveStatusForDate(employee.employeeCode, planDate);
+        if (leaveStatus.hasLeave) {
+          const detail = leaveStatus.status === 'Pending' ? 'pending leave' : 'approved leave';
+          return res.status(403).json({
+            error: `You are on ${detail} today, so the plan for this day is blocked.`,
+            message: `You are on ${detail} today, so the plan for this day is blocked.`
+          });
+        }
+      }
+
       // Check if plan window is open (manual override has priority)
       const settings = await readSettings();
+      const allowLatePlanSubmission = !!settings.allowLatePlanSubmission;
 
       const istNow = new Date(new Date().getTime() + (new Date().getTimezoneOffset() * 60000) + (5.5 * 60 * 60 * 1000));
       const today = format(istNow, "yyyy-MM-dd");
@@ -3051,7 +3128,7 @@ export async function registerRoutes(
       const isOverrideToday = settings.planWindowLastModifiedDate === today;
       const planWindowOpen = isOverrideToday
         ? !!settings.planWindowOpen
-        : ((!isAutomatedClosed && !isPastCutoff) || odExempt);
+        : ((!isAutomatedClosed && !isPastCutoff) || odExempt || allowLatePlanSubmission);
 
       if (!planWindowOpen) {
         const reason = isPastCutoff ? "12:30 PM cutoff" : "administrative closure";
@@ -3065,7 +3142,6 @@ export async function registerRoutes(
 
       // Enforce auto-selected PMS tasks are included
       const { getProjects } = await import('./pmsSupabase');
-      const employee = await storage.getEmployee(employeeId);
       if (employee) {
         const userDept = employee.department || '';
         const projects = await getProjects(employee.role, employee.employeeCode, userDept);
@@ -3929,6 +4005,27 @@ export async function registerRoutes(
       res.json({ success: true, settings });
     } catch (err) {
       console.error('[SETTINGS] Failed to toggle force allow final submit:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  });
+
+  app.patch('/api/settings/late-plan-override', async (req, res) => {
+    try {
+      const { employeeId, enabled } = req.body;
+      const actor = await storage.getEmployee(employeeId);
+      if (!actor || !['admin', 'manager', 'hr'].includes(actor.role) && actor.employeeCode !== 'E0046') {
+        return res.status(403).json({ error: 'Unauthorized. Only admins/managers/HR can toggle this setting.' });
+      }
+      const settings = await readSettings();
+      settings.allowLatePlanSubmission = !!enabled;
+      const success = await writeSettings(settings);
+      if (!success) {
+        return res.status(500).json({ error: 'Failed to write settings' });
+      }
+      broadcast('late_plan_override_changed', { enabled: !!enabled, changedBy: actor.name });
+      res.json({ success: true, settings });
+    } catch (err) {
+      console.error('[SETTINGS] Failed to toggle late plan override:', err);
       res.status(500).json({ error: 'Server error' });
     }
   });

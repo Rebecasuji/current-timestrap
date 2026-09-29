@@ -328,6 +328,16 @@ export default function TrackerPage({ user }: TrackerPageProps) {
     },
   });
 
+  const { data: leaveStatusData } = useQuery<{ hasLeave: boolean; status: string | null }>({
+    queryKey: ['/api/employee/leave-status', user?.employeeCode, formattedDate],
+    enabled: !!user?.employeeCode && !!formattedDate,
+    queryFn: async () => {
+      const res = await fetch(`/api/employee/leave-status?employeeCode=${user.employeeCode}&date=${formattedDate}`);
+      if (!res.ok) return { hasLeave: false, status: null };
+      return res.json();
+    },
+  });
+
   const canToggleForceSubmit = user.employeeCode === 'E0046' || user.employeeCode === 'E0048';
 
   // Toggle force allow final submit mutation
@@ -668,6 +678,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
 
   const alreadySubmittedToday = !!dailySubmission;
   const needsPlan = formattedDate === currentToday && !dailyPlanStatus?.submitted;
+  const isOnLeaveToday = !!leaveStatusData?.hasLeave;
 
   // Allow submission if there are pending (draft) tasks or server entries,
   // a plan exists for today,
@@ -692,6 +703,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
   const canSubmit =
     !isSubmitting &&
     !needsPlan &&
+    !isOnLeaveToday &&
     todaysTasksOnly.length > 0 &&
     (hasEnoughHours || settings.forceAllowFinalSubmit) &&
     !hasInvalidDraftTasks;
@@ -700,6 +712,9 @@ export default function TrackerPage({ user }: TrackerPageProps) {
   // blocker is visible instead of a silently greyed-out button.
   const submitBlockReason = useMemo(() => {
     if (isSubmitting) return null;
+    if (isOnLeaveToday) return leaveStatusData?.status === 'Pending'
+      ? 'You have a pending leave request today, so the timesheet for this date is blocked.'
+      : 'You are on leave today, so the timesheet for this date is blocked.';
     if (needsPlan) return "You haven't submitted today's Plan for the Day yet.";
     if (todaysTasksOnly.length === 0) return 'No tasks logged yet for this date.';
     if (hasInvalidDraftTasks) {
@@ -719,7 +734,7 @@ export default function TrackerPage({ user }: TrackerPageProps) {
       return `You need ${formatDuration(remaining)} more logged before you can submit (8-hour rule).`;
     }
     return null;
-  }, [isSubmitting, needsPlan, todaysTasksOnly, hasInvalidDraftTasks, hasEnoughHours, settings.forceAllowFinalSubmit, totalCombinedMinutes]);
+  }, [isSubmitting, isOnLeaveToday, leaveStatusData?.status, needsPlan, todaysTasksOnly, hasInvalidDraftTasks, hasEnoughHours, settings.forceAllowFinalSubmit, totalCombinedMinutes]);
 
 
   const handleSaveTask = async (taskData: Task) => {
@@ -1162,6 +1177,17 @@ export default function TrackerPage({ user }: TrackerPageProps) {
   return (
     <div className="p-6 space-y-4" data-testid="tracker-page">
       {user?.name?.toLowerCase() !== 'durga devi' && <GreetingAssistant userName={user.name} />}
+
+      {isOnLeaveToday && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100 text-sm">
+          <div className="font-bold uppercase tracking-wide">Leave status</div>
+          <p className="mt-1 text-amber-50/90">
+            {leaveStatusData?.status === 'Pending'
+              ? 'You have a pending leave request for this date, so no plan or timesheet can be submitted today.'
+              : 'You are on leave today. The plan and timesheet for this date are blocked.'}
+          </p>
+        </div>
+      )}
 
       {/* Merged Banner & Stat Bar Container */}
       <Card className="tracker-top-container relative py-4 px-6 overflow-hidden">
